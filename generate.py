@@ -240,6 +240,67 @@ def _compute_zoom_extent(cluster_indices: set, cities: list,
     ]
 
 
+def _place_zoom_inset(layout: LayoutEngine,
+                      extent_zoom: list,
+                      main_extent: list,
+                      crs_cos: float) -> tuple:
+    """螺旋搜索空白区域放置放大图。
+
+    从放大区域的中心出发，螺旋式向外搜索，直到找到
+    不与已有元素冲突的位置。
+
+    Args:
+        layout: 布局引擎
+        extent_zoom: 放大区域 [lon_min, lon_max, lat_min, lat_max]
+        main_extent: 主图范围
+        crs_cos: 纬度余弦补偿
+
+    Returns:
+        (center_lon, center_lat, half_w, half_h) 永远返回有效位置
+    """
+    inset_fig_w = 0.25
+    map_lon_span = main_extent[1] - main_extent[0]
+    map_lat_span = main_extent[3] - main_extent[2]
+
+    zoom_lon_span = extent_zoom[1] - extent_zoom[0]
+    zoom_lat_span = extent_zoom[3] - extent_zoom[2]
+
+    zoom_ratio = (zoom_lat_span / (zoom_lon_span * crs_cos)) if zoom_lon_span > 0 else 1.0
+    inset_fig_h = inset_fig_w * zoom_ratio
+    inset_fig_h = max(0.15, min(0.35, inset_fig_h))
+
+    inset_hw = (inset_fig_w * map_lon_span / 0.98) / 2
+    inset_hh = (inset_fig_h * map_lat_span / 0.98) / 2
+
+    center_lon = (extent_zoom[0] + extent_zoom[1]) / 2
+    center_lat = (extent_zoom[2] + extent_zoom[3]) / 2
+
+    for step in range(1, 20):
+        radius = 0.3 + step * 0.25
+        for ang_idx in range(8):
+            angle = math.radians(ang_idx * 45 + step * 15)
+            cx = center_lon + radius * math.cos(angle)
+            cy = center_lat + radius * math.sin(angle)
+
+            if not (main_extent[0] + inset_hw < cx < main_extent[1] - inset_hw):
+                continue
+            if not (main_extent[2] + inset_hh < cy < main_extent[3] - inset_hh):
+                continue
+
+            if layout.is_position_clear(cx, cy, inset_hw, inset_hh,
+                                        margin=0.05, my_kind="inset"):
+                layout.place(cx, cy, inset_hw, inset_hh,
+                            f"inset_{center_lon:.2f}_{center_lat:.2f}")
+                return cx, cy, inset_hw, inset_hh
+
+    # 回退：右上角
+    cx = main_extent[1] - inset_hw - 0.3
+    cy = main_extent[3] - inset_hh - 0.3
+    layout.place(cx, cy, inset_hw, inset_hh,
+                f"inset_fb_{center_lon:.2f}")
+    return cx, cy, inset_hw, inset_hh
+
+
 def _detect_city_provinces(cities: list) -> dict:
     """根据城市坐标自动判断所属省份。返回 {城市名: 省份简称}。"""
     from cartopy.io import shapereader
