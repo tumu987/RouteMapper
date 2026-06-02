@@ -596,15 +596,15 @@ def generate(cfg: dict) -> str:
 
     # 阶段1 — 放置所有可松弛元素（仅注册坐标，不渲染）
     day_recipes = _place_day_labels(layout, cfg, all_days, day_to_segs, cities, crs_cos)
-    attr_recipes = _place_attractions(layout, cities)
     dt_recipes = _place_dist_time_labels(layout, segments, cities)
+    attr_recipes = _place_attractions(layout, cities)
 
-    # 阶段2 — 全局松弛：跨类型冲突由 layout.relax_overlaps 一次性解决
+    # 全局松弛
     n = layout.relax_overlaps()
     if n:
         print(f"  全局松弛: 修复 {n} 处重叠")
 
-    # 阶段3 — 渲染所有元素
+    # 渲染所有元素
     _render_day_items(ax, layout, day_recipes)
     _render_attr_items(ax, layout, attr_recipes)
     _render_dt_items(ax, layout, dt_recipes)
