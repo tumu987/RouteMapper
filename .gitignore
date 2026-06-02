@@ -5,3 +5,4 @@ __pycache__/
 output/
 *.png
 南疆地图_全部文件/
+routes/*_config.json
