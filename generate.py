@@ -142,6 +142,46 @@ def _detect_close_pairs(cities: list, segments: list,
     return close
 
 
+def _group_connected_pairs(pairs: list) -> list:
+    """将过近城市对按连通关系聚合为城市簇。
+
+    使用并查集（union-find）。A-B 且 B-C → 合并为一个簇 {A, B, C}。
+
+    Args:
+        pairs: [(from_index, to_index), ...]
+
+    Returns:
+        [{idx1, idx2, idx3}, ...] 每个集合是一个需要放大的城市簇
+    """
+    if not pairs:
+        return []
+
+    parent = {}
+
+    def find(x):
+        if x not in parent:
+            parent[x] = x
+        if parent[x] != x:
+            parent[x] = find(parent[x])
+        return parent[x]
+
+    def union(x, y):
+        px, py = find(x), find(y)
+        if px != py:
+            parent[px] = py
+
+    for i, j in pairs:
+        union(i, j)
+
+    groups = {}
+    for i, j in pairs:
+        root = find(i)
+        groups.setdefault(root, set()).add(i)
+        groups.setdefault(root, set()).add(j)
+
+    return list(groups.values())
+
+
 def _detect_city_provinces(cities: list) -> dict:
     """根据城市坐标自动判断所属省份。返回 {城市名: 省份简称}。"""
     from cartopy.io import shapereader
