@@ -747,6 +747,54 @@ def _render_dt_items(ax, layout, recipes: list) -> None:
 # 放大图子管道：在独立 figure 上运行完整布局引擎
 # ═══════════════════════════════════════════════════════════════════
 
+def _place_zoom_attractions(ax, layout: LayoutEngine,
+                             cities: list, city_radius: float,
+                             crs_cos: float) -> list:
+    """放大镜专用景点放置——简化偏移，不依赖主图距离常量。
+
+    返回 recipes 列表，与 _render_attr_items 兼容。
+    """
+    from renderer import render_attraction_outside
+    recipes = []
+    gap = city_radius + 0.01  # 景点紧贴城圈
+
+    for idx, c in enumerate(cities):
+        prim_list = c.get("attractions_primary", [])
+        sec_list = c.get("attractions_secondary", [])
+        prim_list = _safe_attr(prim_list, c["name"], "主要")
+        sec_list = _safe_attr(sec_list, c["name"], "次要")
+
+        all_attrs = []
+        for is_prim, alist in [(True, prim_list), (False, sec_list)]:
+            for a in alist:
+                all_attrs.append((is_prim, a))
+
+        # 景点围绕城市排布（上下交替）
+        for ai, (is_prim, a) in enumerate(all_attrs):
+            color_tag = "prim" if is_prim else "sec"
+            label_key = f"attr_{idx}_{ai}_{color_tag}"
+            sz = 14 if is_prim else 12
+
+            side = 1 if ai % 2 == 0 else -1
+            tx = c["lon"] + side * gap
+            ty = c["lat"] + (ai // 2) * gap * 0.5 * (1 if ai % 4 < 2 else -1)
+
+            ha = "left" if side > 0 else "right"
+            layout.place(tx, ty, 0.05, 0.03, label_key)
+            recipes.append({
+                "kind": "outside",
+                "label_key": label_key,
+                "name": a["name"],
+                "alat": float(a["lat"]),
+                "alon": float(a["lon"]),
+                "is_primary": is_prim,
+                "ha": ha,
+                "need_leader": True,
+            })
+
+    return recipes
+
+
 def _render_zoom_pipeline(ax, extent_zoom: list,
                           cluster: set, cities: list, segments: list,
                           day_colors: dict, output: dict) -> None:
@@ -806,6 +854,11 @@ def _render_zoom_pipeline(ax, extent_zoom: list,
     layout.LINE_GAP *= scale
     layout.MAX_SLIDE_FRAC *= scale
     layout.MAX_SLIDE_ABS *= scale
+    # 搜索距离缩放要温和，确保能走出城圈边界
+    attr_scale = max(scale, 0.4)
+    layout.ATTR_SEARCH_DISTS = tuple(d * attr_scale for d in LayoutEngine.ATTR_SEARCH_DISTS)
+    layout.ATTR_FALLBACK_DISTS = tuple(d * attr_scale for d in LayoutEngine.ATTR_FALLBACK_DISTS)
+    layout.GROUPED_GAP_DISTS = tuple(d * attr_scale for d in LayoutEngine.GROUPED_GAP_DISTS)
 
     # ── 先画外部连线（只画线，不参与布局） ──
     from renderer import render_route_segment as _draw_route
@@ -860,11 +913,30 @@ def _render_zoom_pipeline(ax, extent_zoom: list,
         layout, local_cfg, all_days, day_to_segs, local_cities, crs_cos)
     # L6: 距离/时间
     dt_recipes = _place_dist_time_labels(layout, local_segs, local_cities)
-    # L4: 景点（传入缩放后的城圈半径）
-    attr_recipes = _place_attractions(layout, local_cities,
-                                      city_radius=zoom_city_radius)
+    # L4: 景点（CITY_RADIUS→极小值强制所有景点走独立放置 + layout 内部距离已缩放）
+    import config as _cfg
+    _orig_cr = _cfg.CITY_RADIUS
+    _cfg.CITY_RADIUS = -0.1  # 负值：place_attraction 判定所有景点为圈外，走独立引线放置
+    try:
+        attr_recipes = _place_attractions(layout, local_cities,
+                                          city_radius=-0.1)
+    finally:
+        _cfg.CITY_RADIUS = _orig_cr
 
     # 不松弛：方图比圆大一倍，标注天然分散
+    print(f"  [zoom] placed: {sorted([p[4] for p in layout.placed if 'attr' in p[4]])}")
+    print(f"  [zoom] recipes: {[r.get('name', r.get('kind','?')) for r in attr_recipes]}")
+    for r in attr_recipes:
+        if r.get("kind") == "outside":
+            k = r["label_key"]
+            x, y = _lookup_placed(layout, k)
+            print(f"  [zoom]   {r['name']} ({k}): ({x:.3f},{y:.3f})" if x else f"  [zoom]   {r['name']} ({k}): NOT FOUND")
+        else:
+            for im in r.get("items_meta", []):
+                k = im["label_key"]
+                x, y = _lookup_placed(layout, k)
+                print(f"  [zoom]   {im['name']} ({k}): ({x:.3f},{y:.3f})" if x else f"  [zoom]   {im['name']} ({k}): NOT FOUND")
+
     # 渲染
     _render_day_items(ax, layout, day_recipes)
     _render_attr_items(ax, layout, attr_recipes)

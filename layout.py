@@ -2,7 +2,10 @@
 import math
 from typing import List, Tuple, Optional
 
-from config import CITY_RADIUS, ATTR_PRIM_COLOR, ATTR_SEC_COLOR
+import config as _layout_cfg
+# 引用 config 模块确保取值始终是最新的
+ATTR_PRIM_COLOR = _layout_cfg.ATTR_PRIM_COLOR
+ATTR_SEC_COLOR = _layout_cfg.ATTR_SEC_COLOR
 
 
 class LayoutEngine:
@@ -13,7 +16,7 @@ class LayoutEngine:
     route_segs 列表存储路线段用于碰撞检测：[(x1, y1, x2, y2, half_width), ...]
     """
 
-    # ── 布局常量 ──
+    # ── 布局常量（可被实例属性覆盖以缩放）──
     ROUTE_HW = 0.07
     MARGIN_PLACED = 0.06
     MARGIN_ROUTE = 0.10
@@ -28,7 +31,11 @@ class LayoutEngine:
     FONT_TIME = 14
     FONT_PRIM = 14
     FONT_SEC = 12
-    LINE_GAP = 0.10  # vertical gap between paired labels (day+city, dist+time)
+    LINE_GAP = 0.10
+    # 景点搜索距离
+    ATTR_SEARCH_DISTS = (0.06, 0.10, 0.16, 0.24)
+    ATTR_FALLBACK_DISTS = (0.20, 0.30, 0.45, 0.65)
+    GROUPED_GAP_DISTS = (0.05, 0.12, 0.22, 0.35)
 
     def __init__(self, px_per_deg: float = 200.0, output_dpi: float = 100.0):
         self.placed: List[Tuple[float, float, float, float, str]] = []
@@ -448,7 +455,7 @@ class LayoutEngine:
             raise ValueError(f"城市 '{city_name}' 不在 cities 列表中")
         ci = ci_list[0]
         clon, clat = cities[ci]["lon"], cities[ci]["lat"]
-        cr = CITY_RADIUS
+        cr = _layout_cfg.CITY_RADIUS
         disp_day = day_display if day_display else day_num
         disp_city = city_display if city_display else f"{city_name}全天"
 
@@ -474,8 +481,8 @@ class LayoutEngine:
             for ci2, c2 in enumerate(cities):
                 if ci2 == ci:
                     continue
-                if abs(bx - c2["lon"]) < hw_c + CITY_RADIUS + 0.15 and \
-                   abs(by - LINE - c2["lat"]) < hh_c + CITY_RADIUS * crs_cos + 0.15:
+                if abs(bx - c2["lon"]) < hw_c + _layout_cfg.CITY_RADIUS + 0.15 and \
+                   abs(by - LINE - c2["lat"]) < hh_c + _layout_cfg.CITY_RADIUS * crs_cos + 0.15:
                     return False
             return True
 
@@ -591,8 +598,8 @@ class LayoutEngine:
                 if d <= r_eff2 + hlw + 0.08:
                     return False
             for c in cities:
-                if abs(bx - c["lon"]) < hw_t + CITY_RADIUS + 0.08 and \
-                   abs(by - LINE - c["lat"]) < hh_t + CITY_RADIUS + 0.08:
+                if abs(bx - c["lon"]) < hw_t + _layout_cfg.CITY_RADIUS + 0.08 and \
+                   abs(by - LINE - c["lat"]) < hh_t + _layout_cfg.CITY_RADIUS + 0.08:
                     return False
             return True
 
@@ -663,7 +670,7 @@ class LayoutEngine:
         Returns:
             (x, y, ha, leader_info) — 标注位置、对齐方式、引线信息
         """
-        cr = CITY_RADIUS
+        cr = _layout_cfg.CITY_RADIUS
         # 判断是否在城圈内
         in_circle = math.hypot(alon - city_lon, alat - city_lat) < cr + 0.02
 
@@ -677,7 +684,7 @@ class LayoutEngine:
 
         # 收集所有有效位置，选离路线中点最远的（给天次留空间）
         candidates = []
-        for dist in (0.06, 0.10, 0.16, 0.24):
+        for dist in self.ATTR_SEARCH_DISTS:
             for angle_deg in (240, 300, 120, 60, 225, 315, 135, 45):
                 rad = math.radians(angle_deg)
                 tx = alon + dist * math.cos(rad)
@@ -703,7 +710,7 @@ class LayoutEngine:
         # 尝试腾挪：微调附近的天次/距离/时间来让位
         if self.budge_blockers(alon, alat) > 0:
             # 重新尝试正常搜索
-            for dist in (0.06, 0.10, 0.16, 0.24):
+            for dist in self.ATTR_SEARCH_DISTS:
                 for angle_deg in (240, 300, 120, 60, 225, 315, 135, 45):
                     rad = math.radians(angle_deg)
                     tx = alon + dist * math.cos(rad)
@@ -718,7 +725,7 @@ class LayoutEngine:
                         return tx, ty, ha, leader_info
 
         # Fallback — 扩大搜索半径
-        for radius in (0.20, 0.30, 0.45, 0.65):
+        for radius in self.ATTR_FALLBACK_DISTS:
             for angle_deg in (240, 300, 120, 60, 210, 330, 150, 30):
                 rad = math.radians(angle_deg)
                 tx = alon + radius * math.cos(rad)
@@ -754,7 +761,7 @@ class LayoutEngine:
             其中 (edge_x, edge_y) 为城圈边缘连接点
         """
         LINE = 0.06
-        cr = CITY_RADIUS
+        cr = _layout_cfg.CITY_RADIUS
 
         items = []
         for n in prim_names[:2]:
@@ -772,7 +779,8 @@ class LayoutEngine:
         total_h = sum(hh * 2 for _, _, hh, _, _, _ in items) + LINE * (len(items) - 1)
 
         # 从城圈边缘最近开始（仅对角线确保折线可见）
-        for dist in (cr + 0.05, cr + 0.12, cr + 0.22, cr + 0.35):
+        for gap in self.GROUPED_GAP_DISTS:
+            dist = cr + gap
             for angle_deg in (225, 315, 135, 45):
                 rad = math.radians(angle_deg)
                 bx = city_lon + dist * math.cos(rad)
