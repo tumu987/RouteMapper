@@ -182,6 +182,64 @@ def _group_connected_pairs(pairs: list) -> list:
     return list(groups.values())
 
 
+def _compute_zoom_extent(cluster_indices: set, cities: list,
+                         padding: float) -> list:
+    """计算放大区域范围。
+
+    收集簇内所有城市 + 景点坐标的 bbox，按 padding 倍率外扩。
+    宽高比 clamp 到 [0.4, 2.5] 防止极端扁平。
+
+    Args:
+        cluster_indices: 城市索引集合
+        cities: 城市列表
+        padding: 外扩倍率（>1 扩大，<1 缩小）
+
+    Returns:
+        [lon_min, lon_max, lat_min, lat_max] 或 None
+    """
+    all_lons = []
+    all_lats = []
+    for idx in cluster_indices:
+        c = cities[idx]
+        all_lons.append(c["lon"])
+        all_lats.append(c["lat"])
+        for attr_key in ("attractions_primary", "attractions_secondary"):
+            for a in c.get(attr_key, []):
+                try:
+                    all_lons.append(float(a["lon"]))
+                    all_lats.append(float(a["lat"]))
+                except (ValueError, TypeError):
+                    pass
+
+    if not all_lons:
+        return None
+
+    lon_center = (min(all_lons) + max(all_lons)) / 2
+    lat_center = (min(all_lats) + max(all_lats)) / 2
+    lon_span = (max(all_lons) - min(all_lons)) * padding
+    lat_span = (max(all_lats) - min(all_lats)) * padding
+
+    # 确保最小跨度（至少 0.3°）
+    lon_span = max(lon_span, 0.3)
+    lat_span = max(lat_span, 0.2)
+
+    # 宽高比 clamp
+    avg_lat = sum(all_lats) / len(all_lats)
+    cos_lat = math.cos(math.radians(avg_lat))
+    ratio = (lon_span * cos_lat) / lat_span if lat_span > 0 else 1.0
+    if ratio > 2.5:
+        lon_span = lat_span * 2.5 / cos_lat
+    elif ratio < 0.4:
+        lat_span = lon_span * cos_lat / 0.4
+
+    return [
+        round(lon_center - lon_span / 2, 3),
+        round(lon_center + lon_span / 2, 3),
+        round(lat_center - lat_span / 2, 3),
+        round(lat_center + lat_span / 2, 3),
+    ]
+
+
 def _detect_city_provinces(cities: list) -> dict:
     """根据城市坐标自动判断所属省份。返回 {城市名: 省份简称}。"""
     from cartopy.io import shapereader
