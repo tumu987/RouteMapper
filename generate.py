@@ -22,7 +22,7 @@ import cartopy.crs as ccrs
 from config import (
     load_config, CITY_RADIUS,
     EN_PROV_MAP, PROV_CN_NAMES, PROVINCE_COLORS,
-    ATTR_PRIM_COLOR,
+    ATTR_PRIM_COLOR, INSET_THRESHOLD, INSET_PADDING,
 )
 from layout import LayoutEngine
 from renderer import (
@@ -31,6 +31,7 @@ from renderer import (
     render_dist_time, render_attraction_outside,
     render_grouped_attractions,
     render_title, render_itinerary,
+    render_zoom_inset_content, render_zoom_indicator,
 )
 
 
@@ -801,6 +802,65 @@ def generate(cfg: dict) -> str:
 
     # L7: 行程表 + 标题（最后，不影响其他元素布局）
     _render_itinerary_and_title(ax, layout, cfg, all_days, day_to_segs, extent)
+
+    # L8: 局部放大图
+    try:
+        close_pairs = _detect_close_pairs(cities, segments, INSET_THRESHOLD)
+        if close_pairs:
+            print(f"  检测到 {len(close_pairs)} 对过近城市")
+            clusters = _group_connected_pairs(close_pairs)
+
+            for ci, cluster in enumerate(clusters):
+                extent_zoom = _compute_zoom_extent(
+                    cluster, cities, INSET_PADDING)
+                if extent_zoom is None:
+                    continue
+
+                cx, cy, hw, hh = _place_zoom_inset(
+                    layout, extent_zoom, extent, crs_cos)
+
+                # 地图坐标 → 图形坐标
+                disp_xy = ax.transData.transform((cx, cy))
+                fig_xy = fig.transFigure.inverted().transform(disp_xy)
+
+                inset_fig_w = (2 * hw) / (extent[1] - extent[0]) * 0.98
+                inset_fig_h = (2 * hh) / (extent[3] - extent[2]) * 0.98
+
+                left = fig_xy[0] - inset_fig_w / 2
+                bottom = fig_xy[1] - inset_fig_h / 2
+
+                # 创建放大图 axes
+                inset_ax = fig.add_axes(
+                    [left, bottom, inset_fig_w, inset_fig_h],
+                    projection=ccrs.PlateCarree(),
+                )
+                inset_ax.set_extent(extent_zoom)
+
+                # 渲染放大图内容
+                render_zoom_inset_content(
+                    inset_ax, extent_zoom, cluster,
+                    cities, segments, cfg["day_colors"],
+                )
+
+                # 边框
+                import matplotlib.patches as mpatches
+                inset_ax.add_patch(mpatches.Rectangle(
+                    (0, 0), 1, 1, transform=inset_ax.transAxes,
+                    facecolor="none", edgecolor="#E74C3C",
+                    linewidth=2, zorder=100,
+                ))
+
+                # 主图标记
+                render_zoom_indicator(ax, extent_zoom, inset_ax)
+
+                city_names = [cities[i]["name"] for i in sorted(cluster)]
+                print(f"  放大图{ci+1}: {'+'.join(city_names)} -> "
+                      f"extent=({extent_zoom[0]:.2f},{extent_zoom[1]:.2f},"
+                      f"{extent_zoom[2]:.2f},{extent_zoom[3]:.2f})")
+    except Exception as e:
+        print(f"  局部放大图失败(跳过): {e}")
+        import traceback
+        traceback.print_exc()
 
     # ── 输出 ──
     print("保存...")
