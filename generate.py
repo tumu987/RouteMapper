@@ -1058,7 +1058,9 @@ def generate(cfg: dict) -> str:
     os.makedirs(cache_dir, exist_ok=True)
     out_path = os.path.join(cache_dir, f"{route_name}.png")
 
-    plt.savefig(out_path, dpi=output["dpi"], facecolor="white")
+    plt.savefig(out_path, dpi=output["dpi"], facecolor="white",
+                bbox_inches="tight", pad_inches=0.02,
+                bbox_extra_artists=[])
     plt.close()
 
     if output.get("desktop_copy", False):
