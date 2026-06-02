@@ -796,6 +796,16 @@ def _render_zoom_pipeline(ax, extent_zoom: list,
     extent_w = extent_zoom[1] - extent_zoom[0]
     px_per_deg = (output.get("width_inch", 5.0) * 0.98 * output["dpi"]) / extent_w if extent_w > 0 else 200
     layout = LayoutEngine(px_per_deg, output["dpi"])
+    # 缩小碰撞距离常量适配放大镜比例
+    scale = zoom_city_radius / CITY_RADIUS  # = 1/ZOOM_FACTOR
+    layout.ROUTE_HW *= scale
+    layout.MARGIN_PLACED *= scale
+    layout.MARGIN_ROUTE *= scale
+    layout.MARGIN_LABEL *= scale
+    layout.MIN_DIST_EXTRA *= scale
+    layout.LINE_GAP *= scale
+    layout.MAX_SLIDE_FRAC *= scale
+    layout.MAX_SLIDE_ABS *= scale
 
     # ── 先画外部连线（只画线，不参与布局） ──
     from renderer import render_route_segment as _draw_route
