@@ -405,7 +405,7 @@ def render_zoom_indicator(ax_main: Any, extent_zoom: list,
     zoom_cx = (extent_zoom[0] + extent_zoom[1]) / 2
     zoom_cy = (extent_zoom[2] + extent_zoom[3]) / 2
     zoom_rx = (extent_zoom[1] - extent_zoom[0]) / 2
-    zoom_ry = zoom_rx / crs_cos  # 拉伸纬度
+    zoom_ry = zoom_rx * crs_cos  # 纬度补偿：显示为正圆
 
     n_pts = 64
     angles = [2 * math.pi * i / n_pts for i in range(n_pts + 1)]
@@ -415,20 +415,19 @@ def render_zoom_indicator(ax_main: Any, extent_zoom: list,
                  linestyle="--", transform=ccrs.PlateCarree(),
                  zorder=98, alpha=0.7)
 
-    # 连接线：放大区域圆边 → 放大镜圆边
+    # 连接线：放大区域圆边 → 放大镜圆边（显示坐标下的直线）
     inset_r = min(inset_hw, inset_hh)
     dx = inset_cx - zoom_cx
-    dy = inset_cy - zoom_cy
-    # 调整方向向量也做纬度补偿
-    dy_adj = dy * crs_cos
-    dist = math.hypot(dx, dy_adj)
+    dy = (inset_cy - zoom_cy) * crs_cos  # 补偿纬度拉伸
+    dist = math.hypot(dx, dy)
     if dist > 0:
-        ux, uy_adj = dx / dist, dy_adj / dist
-        uy = uy_adj / crs_cos
-        # 起点：放大区域圆边
-        sx, sy = zoom_cx + ux * zoom_rx, zoom_cy + uy * zoom_ry
-        # 终点：放大镜圆边
-        ex, ey = inset_cx - ux * inset_r, inset_cy - uy * inset_r
+        ux, uy = dx / dist, dy / dist
+        # 起点：放大区域圆边（geo坐标）
+        sx = zoom_cx + ux * zoom_rx
+        sy = zoom_cy + uy * zoom_ry
+        # 终点：放大镜圆边（geo坐标）
+        ex = inset_cx - ux * inset_r
+        ey = inset_cy - uy * inset_r * crs_cos
         ax_main.plot([sx, ex], [sy, ey],
                      color=color, linewidth=1, alpha=0.4,
                      linestyle="--",

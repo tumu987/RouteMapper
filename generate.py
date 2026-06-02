@@ -252,7 +252,7 @@ def _place_zoom_inset(layout: LayoutEngine,
     Returns:
         (center_lon, center_lat, half_w, half_h) 永远返回有效位置
     """
-    inset_fig_w = 0.15
+    inset_fig_w = 0.25   # 嵌入后实际 5x 放大
     map_lon_span = main_extent[1] - main_extent[0]
     map_lat_span = main_extent[3] - main_extent[2]
 
@@ -451,8 +451,11 @@ def _render_cities(ax, layout: LayoutEngine, cities: list,
                      f"city_{c['name']}")
 
 
-def _place_attractions(layout: LayoutEngine, cities: list) -> list:
+def _place_attractions(layout: LayoutEngine, cities: list,
+                       city_radius: float = None) -> list:
     """L4: 景点放置——仅放置，不渲染。返回 render recipes 列表。"""
+    if city_radius is None:
+        city_radius = CITY_RADIUS
     print("景点(放置)...")
     recipes = []
     for idx, c in enumerate(cities):
@@ -465,10 +468,10 @@ def _place_attractions(layout: LayoutEngine, cities: list) -> list:
         # 城圈内景点：合并引线
         in_prim = [a for a in prim_list
                    if math.hypot(a["lon"] - c["lon"], a["lat"] - c["lat"])
-                   < CITY_RADIUS + 0.02]
+                   < city_radius + 0.02]
         in_sec = [a for a in sec_list
                   if math.hypot(a["lon"] - c["lon"], a["lat"] - c["lat"])
-                  < CITY_RADIUS + 0.02]
+                  < city_radius + 0.02]
         out_prim = [a for a in prim_list if a not in in_prim]
         out_sec = [a for a in sec_list if a not in in_sec]
 
@@ -842,10 +845,11 @@ def _render_zoom_pipeline(ax, extent_zoom: list,
         layout, local_cfg, all_days, day_to_segs, local_cities, crs_cos)
     # L6: 距离/时间
     dt_recipes = _place_dist_time_labels(layout, local_segs, local_cities)
-    # L4: 景点
-    attr_recipes = _place_attractions(layout, local_cities)
+    # L4: 景点（传入缩放后的城圈半径）
+    attr_recipes = _place_attractions(layout, local_cities,
+                                      city_radius=zoom_city_radius)
 
-    # 全局松弛
+    # 全局松弛（范围 0.5°+ 足够，不会推到外面）
     layout.relax_overlaps()
 
     # 渲染
