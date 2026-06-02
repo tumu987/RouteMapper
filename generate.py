@@ -849,19 +849,46 @@ def _render_zoom_pipeline(ax, extent_zoom: list,
         render_city_node(ax, c["name"], c["lon"], c["lat"],
                          c.get("color", "#888888"), crs_cos, radius=zoom_cr)
 
-    # 天次 + 距离/时间
-    offset = zoom_cr * 1.5
-    for seg in local_segs:
-        fi, ti = seg["from_index"], seg["to_index"]
-        mx = (local_cities[fi]["lon"] + local_cities[ti]["lon"]) / 2
-        my = (local_cities[fi]["lat"] + local_cities[ti]["lat"]) / 2
-        color = local_day_colors.get(str(seg["day"]), "#888888")
-        render_day_label(ax, f"D{seg['day']}", mx, my + offset, "center",
-                         color=color, size=14)
-        dist = seg.get("distance", ""); time = seg.get("time", "")
-        if dist:
-            render_dist_time(ax, dist, time, mx, my - offset,
-                             mx, my - offset * 1.8)
+    # ── LayoutEngine（缩放版，只用于天次/距离/时间放置+松弛）──
+    extent_w = extent_zoom[1] - extent_zoom[0]
+    px_per_deg = (output.get("width_inch", 5.0) * 0.98 * output["dpi"]) / extent_w if extent_w > 0 else 200
+    layout = LayoutEngine(px_per_deg, output["dpi"])
+    scale = zoom_cr / CITY_RADIUS
+    layout.ROUTE_HW *= scale
+    layout.MARGIN_PLACED *= scale
+    layout.MARGIN_ROUTE *= scale
+    layout.MARGIN_LABEL *= scale
+    layout.MIN_DIST_EXTRA *= scale
+    layout.LINE_GAP *= scale
+    layout.MAX_SLIDE_FRAC *= scale
+    layout.MAX_SLIDE_ABS *= scale
+
+    # 注册路线和城市到碰撞系统
+    for fi, ti in [(s["from_index"], s["to_index"]) for s in local_segs]:
+        layout.register_route(local_cities[fi]["lon"], local_cities[fi]["lat"],
+                              local_cities[ti]["lon"], local_cities[ti]["lat"],
+                              layout.ROUTE_HW)
+    for c in local_cities:
+        layout.place(c["lon"], c["lat"], zoom_cr + 0.02,
+                     zoom_cr * crs_cos + 0.02, f"city_{c['name']}")
+
+    # 天次 + 距离/时间（LayoutEngine 放置 + 松弛）
+    local_cfg = {"cities": local_cities, "segments": local_segs,
+                 "day_colors": local_day_colors, "rest_days": {},
+                 "day_attractions": {}, "output": output}
+    day_to_segs = {}
+    for si, seg in enumerate(local_segs):
+        day_to_segs.setdefault(seg["day"], []).append(si)
+    all_days = sorted(day_to_segs.keys())
+    day_recipes = _place_day_labels(layout, local_cfg, all_days, day_to_segs,
+                                     local_cities, crs_cos)
+    dt_recipes = _place_dist_time_labels(layout, local_segs, local_cities)
+
+    # 全局松弛
+    layout.relax_overlaps()
+
+    _render_day_items(ax, layout, day_recipes)
+    _render_dt_items(ax, layout, dt_recipes)
 
     # 景点（引线偏移随 zoom_cr 缩放）
     leader_dist = zoom_cr * 3.0
@@ -978,7 +1005,7 @@ def generate(cfg: dict) -> str:
 
                 # ── 创建独立 figure 渲染放大图 ──
                 zoom_dpi = output["dpi"]
-                zoom_w, zoom_h = 10.0, 10.0  # 圆形直径 5 英寸
+                zoom_w, zoom_h = 8.0, 8.0  # 圆形直径 4 英寸
                 zoom_fig = plt.figure(
                     figsize=(zoom_w, zoom_h),
                     facecolor="#F8F4EC", dpi=zoom_dpi,
@@ -1028,31 +1055,52 @@ def generate(cfg: dict) -> str:
                 ring = (dist >= circle_r_px - ring_w) & (dist < circle_r_px)
                 buf[ring] = [228, 60, 60, 255]  # #E74C3C
 
-                # ── 放置：选取框正上方 ──
-                center_lat = (extent_zoom[2] + extent_zoom[3]) / 2
-                cx = (extent_zoom[0] + extent_zoom[1]) / 2
+                # ── 螺旋搜索放置（用圆形实际尺寸碰撞）──
+                from config import RENDER_MARGIN as _RM
+                circle_dia_inch = zoom_w / _RM
+                circle_fig_w = circle_dia_inch / fig.get_figwidth()
+                circle_fig_h = circle_dia_inch / fig.get_figheight()
+                # 转为地图坐标碰撞尺寸
+                map_lon_span = extent[1] - extent[0]
+                map_lat_span = extent[3] - extent[2]
+                circle_hw = (circle_fig_w * map_lon_span / 0.98) / 2
+                circle_hh = (circle_fig_h * map_lat_span / 0.98) / 2
 
-                # 获取 axes 在 figure 中的实际位置
+                center_lon = (extent_zoom[0] + extent_zoom[1]) / 2
+                center_lat = (extent_zoom[2] + extent_zoom[3]) / 2
+                cx = cy = None
+                for step in range(1, 25):
+                    radius = 0.5 + step * 0.2
+                    for ang_idx in range(8):
+                        angle = math.radians(ang_idx * 45 + step * 15)
+                        tx = center_lon + radius * math.cos(angle)
+                        ty = center_lat + radius * math.sin(angle)
+                        if not (extent[0] + circle_hw < tx < extent[1] - circle_hw):
+                            continue
+                        if not (extent[2] + circle_hh < ty < extent[3] - circle_hh):
+                            continue
+                        if layout.is_position_clear(tx, ty, circle_hw, circle_hh,
+                                                    margin=0.03, my_kind="inset"):
+                            cx, cy = tx, ty
+                            break
+                    if cx is not None:
+                        break
+                if cx is None:
+                    print(f"  放大镜{ci+1}: 无合适位置，跳过")
+                    continue
+                layout.place(cx, cy, circle_hw, circle_hh, f"inset_{cx:.2f}")
+
+                # 地图坐标 → figure 坐标
                 ax_bbox = ax.get_position()
                 xlim = ax.get_xlim()
                 ylim = ax.get_ylim()
+                fig_cx = ax_bbox.x0 + ax_bbox.width * (cx - xlim[0]) / (xlim[1] - xlim[0])
+                fig_cy = ax_bbox.y0 + ax_bbox.height * (cy - ylim[0]) / (ylim[1] - ylim[0])
                 ins_fig_w = zoom_w / fig.get_figwidth()
                 ins_fig_h = zoom_h / fig.get_figheight()
 
-                # 选取框顶部（figure 坐标）
-                sel_top_fig = (ax_bbox.y0 + ax_bbox.height *
-                              (center_lat + select_radius - ylim[0]) / (ylim[1] - ylim[0]))
-                # 放大镜底部贴选取框顶部 + 微小间隙
-                ins_bottom_fig = sel_top_fig + 0.01
-                # 放大镜不能超出图面顶部
-                ins_bottom_fig = min(ins_bottom_fig, ax_bbox.y0 + ax_bbox.height - ins_fig_h)
-                ins_cy_fig = ins_bottom_fig + ins_fig_h / 2
-                # 放大镜水平居中于选取框
-                ins_cx_fig = ax_bbox.x0 + ax_bbox.width * (cx - xlim[0]) / (xlim[1] - xlim[0])
-
-                # 创建 Axes 放放大镜
                 ins_ax = fig.add_axes([
-                    ins_cx_fig - ins_fig_w / 2, ins_cy_fig - ins_fig_h / 2,
+                    fig_cx - ins_fig_w / 2, fig_cy - ins_fig_h / 2,
                     ins_fig_w, ins_fig_h,
                 ])
                 ins_ax.imshow(buf, origin="upper")
@@ -1062,14 +1110,17 @@ def generate(cfg: dict) -> str:
                     spine.set_visible(False)
                 ins_ax.set_facecolor("none")
 
-                # 注册到布局（用图面坐标近似）
-                cy = ylim[0] + (ins_cy_fig - ax_bbox.y0) / ax_bbox.height * (ylim[1] - ylim[0])
-                hw = ins_fig_w / ax_bbox.width * (xlim[1] - xlim[0]) / 2
-                hh = ins_fig_h / ax_bbox.height * (ylim[1] - ylim[0]) / 2
-                layout.place(cx, cy, hw, hh, f"inset_{cx:.2f}")
-
-                # ── 主图虚线圆选取框 ──
-                render_zoom_indicator(ax, extent_zoom, select_radius, crs_cos)
+                # ── 主图虚线圆 + 引线 ──
+                # 放大镜在 figure 空间是正圆→地理空间是椭圆，需要 lon/lat 两个半径
+                ax_bbox2 = ax.get_position()
+                xlim2 = ax.get_xlim()
+                ylim2 = ax.get_ylim()
+                circle_fig_r = (circle_dia_inch / 2) / fig.get_figwidth()
+                ins_r_lon = circle_fig_r / ax_bbox2.width * (xlim2[1] - xlim2[0])
+                ins_r_lat = circle_fig_r / ax_bbox2.height * (ylim2[1] - ylim2[0])
+                render_zoom_indicator(ax, extent_zoom, select_radius, crs_cos,
+                                      inset_cx=cx, inset_cy=cy,
+                                      inset_r_lon=ins_r_lon, inset_r_lat=ins_r_lat)
 
                 city_names = [cities[i]["name"] for i in sorted(cluster)]
                 print(f"  放大图{ci+1}: {'+'.join(city_names)} -> "

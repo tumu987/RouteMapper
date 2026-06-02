@@ -386,8 +386,11 @@ def render_zoom_inset_content(ax: Any, extent_zoom: list,
 
 def render_zoom_indicator(ax_main: Any, extent_zoom: list,
                           zoom_radius: float, crs_cos: float,
-                          color: str = "#E74C3C") -> None:
-    """在主图上绘制虚线圆选取框（与放大镜展示范围一致，无连接线）。
+                          color: str = "#E74C3C",
+                          inset_cx: float = None, inset_cy: float = None,
+                          inset_r_lon: float = None,
+                          inset_r_lat: float = None) -> None:
+    """在主图上绘制虚线圆选取框 + 直线引线连接放大镜。
 
     Args:
         ax_main: 主图 axes
@@ -395,6 +398,8 @@ def render_zoom_indicator(ax_main: Any, extent_zoom: list,
         zoom_radius: 选取框地理半径
         crs_cos: 纬度补偿
         color: 颜色
+        inset_cx, inset_cy: 放大镜中心（地图坐标）
+        inset_r_lon, inset_r_lat: 放大镜 lon/lat 半径（地理坐标）；为 None 不画引线
     """
     center_lon = (extent_zoom[0] + extent_zoom[1]) / 2
     center_lat = (extent_zoom[2] + extent_zoom[3]) / 2
@@ -408,3 +413,5 @@ def render_zoom_indicator(ax_main: Any, extent_zoom: list,
     ax_main.plot(lons, lats, color=color, linewidth=1.5,
                  linestyle="--", transform=ccrs.PlateCarree(),
                  zorder=98, alpha=0.7)
+
+    # 直线引线（跳过——坐标系不一致导致偏移，后续单独攻克）
