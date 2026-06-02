@@ -252,7 +252,7 @@ def _place_zoom_inset(layout: LayoutEngine,
     Returns:
         (center_lon, center_lat, half_w, half_h) 永远返回有效位置
     """
-    inset_fig_w = 0.25   # 嵌入后实际 5x 放大
+    inset_fig_w = 0.22   # 嵌入后 ≈4.4x 放大，不压主图内容
     map_lon_span = main_extent[1] - main_extent[0]
     map_lat_span = main_extent[3] - main_extent[2]
 
@@ -270,7 +270,7 @@ def _place_zoom_inset(layout: LayoutEngine,
     center_lat = (extent_zoom[2] + extent_zoom[3]) / 2
 
     for step in range(1, 20):
-        radius = 0.3 + step * 0.25
+        radius = 1.5 + step * 0.3  # 从远处开始搜，避免压主图
         for ang_idx in range(8):
             angle = math.radians(ang_idx * 45 + step * 15)
             cx = center_lon + radius * math.cos(angle)
@@ -287,9 +287,19 @@ def _place_zoom_inset(layout: LayoutEngine,
                             f"inset_{center_lon:.2f}_{center_lat:.2f}")
                 return cx, cy, inset_hw, inset_hh
 
-    # 回退：右上角
-    cx = main_extent[1] - inset_hw - 0.3
-    cy = main_extent[3] - inset_hh - 0.3
+    # 回退：放到被放大区域的对角侧
+    left_side = center_lon > (main_extent[0] + main_extent[1]) / 2
+    top_side = center_lat > (main_extent[2] + main_extent[3]) / 2
+    # 放在地图的对角：左上/右下/左下/右上
+    fallback_corners = [
+        (main_extent[0] + inset_hw + 0.3, main_extent[3] - inset_hh - 0.3),  # 左上
+        (main_extent[1] - inset_hw - 0.3, main_extent[2] + inset_hh + 0.3),  # 右下
+        (main_extent[0] + inset_hw + 0.3, main_extent[2] + inset_hh + 0.3),  # 左下
+        (main_extent[1] - inset_hw - 0.3, main_extent[3] - inset_hh - 0.3),  # 右上
+    ]
+    # 选离 center 最远的角
+    cx, cy = max(fallback_corners,
+                 key=lambda p: math.hypot(p[0] - center_lon, p[1] - center_lat))
     layout.place(cx, cy, inset_hw, inset_hh,
                 f"inset_fb_{center_lon:.2f}")
     return cx, cy, inset_hw, inset_hh
@@ -452,13 +462,19 @@ def _render_cities(ax, layout: LayoutEngine, cities: list,
 
 
 def _place_attractions(layout: LayoutEngine, cities: list,
-                       city_radius: float = None) -> list:
+                       city_radius: float = None,
+                       skip_city_indices: set = None) -> list:
     """L4: 景点放置——仅放置，不渲染。返回 render recipes 列表。"""
     if city_radius is None:
         city_radius = CITY_RADIUS
+    if skip_city_indices is None:
+        skip_city_indices = set()
     print("景点(放置)...")
     recipes = []
     for idx, c in enumerate(cities):
+        # 跳过放大簇内的城市景点
+        if idx in skip_city_indices:
+            continue
         prim_list = c.get("attractions_primary", [])
         sec_list = c.get("attractions_secondary", [])
 
@@ -542,8 +558,11 @@ def _place_attractions(layout: LayoutEngine, cities: list,
 
 def _place_day_labels(layout: LayoutEngine, cfg: dict,
                       all_days: list, day_to_segs: dict,
-                      cities: list, crs_cos: float) -> list:
+                      cities: list, crs_cos: float,
+                      skip_city_indices: set = None) -> list:
     """L5: 天次标注——仅放置，不渲染。返回 render recipes 列表。"""
+    if skip_city_indices is None:
+        skip_city_indices = set()
     print("天次(放置)...")
     segments = cfg["segments"]
     rest_days = cfg.get("rest_days", {})
@@ -589,8 +608,19 @@ def _place_day_labels(layout: LayoutEngine, cfg: dict,
                 "dha": dha,
             })
         elif seg_indices:
+            # 跳过两端都在放大簇内的段
+            skip_segs = []
+            segs_to_place = []
+            for si in seg_indices:
+                s = segments[si]
+                if s["from_index"] in skip_city_indices and s["to_index"] in skip_city_indices:
+                    skip_segs.append(si)
+                else:
+                    segs_to_place.append(si)
+            if not segs_to_place:
+                continue
             tx, ty, ha = layout.place_travel_day(
-                f"D{day}", seg_indices, segments, cities,
+                f"D{day}", segs_to_place, segments, cities,
             )
             recipes.append({
                 "kind": "travel",
@@ -603,8 +633,11 @@ def _place_day_labels(layout: LayoutEngine, cfg: dict,
 
 
 def _place_dist_time_labels(layout: LayoutEngine,
-                            segments: list, cities: list) -> list:
+                            segments: list, cities: list,
+                            skip_city_indices: set = None) -> list:
     """L6: 距离/时间标注——仅放置，不渲染。返回 render recipes 列表。"""
+    if skip_city_indices is None:
+        skip_city_indices = set()
     print("距离/时间(放置)...")
     # 去重往返段（只标一个方向的 dist/time）
     round_trip_skip = set()
@@ -618,6 +651,9 @@ def _place_dist_time_labels(layout: LayoutEngine,
 
     recipes = []
     for si, seg in enumerate(segments):
+        # 跳过放大簇内的段
+        if seg["from_index"] in skip_city_indices and seg["to_index"] in skip_city_indices:
+            continue
         if si in round_trip_skip:
             continue
         dist_text = seg.get("distance", "0km")
@@ -901,10 +937,24 @@ def generate(cfg: dict) -> str:
     # L3: 城市节点 — 固定位置，立即渲染
     _render_cities(ax, layout, cities, crs_cos)
 
-    # 阶段1 — 放置所有可松弛元素（仅注册坐标，不渲染）
-    day_recipes = _place_day_labels(layout, cfg, all_days, day_to_segs, cities, crs_cos)
-    dt_recipes = _place_dist_time_labels(layout, segments, cities)
-    attr_recipes = _place_attractions(layout, cities)
+    # 提前检测放大簇，用于跳过主图标注
+    zoom_skip = set()
+    zoom_clusters = []
+    close_pairs = _detect_close_pairs(cities, segments, INSET_THRESHOLD)
+    if close_pairs:
+        zoom_clusters = _group_connected_pairs(close_pairs)
+        for cluster in zoom_clusters:
+            zoom_skip.update(cluster)
+        print(f"  主图跳过标注: {sorted(zoom_skip)}")
+
+    # 阶段1 — 放置所有可松弛元素（放大区跳过主图标注）
+    day_recipes = _place_day_labels(
+        layout, cfg, all_days, day_to_segs, cities, crs_cos,
+        skip_city_indices=zoom_skip)
+    dt_recipes = _place_dist_time_labels(
+        layout, segments, cities, skip_city_indices=zoom_skip)
+    attr_recipes = _place_attractions(
+        layout, cities, skip_city_indices=zoom_skip)
 
     # 全局松弛
     n = layout.relax_overlaps()
@@ -921,12 +971,10 @@ def generate(cfg: dict) -> str:
 
     # L8: 局部放大图（独立 figure 渲染 + 截图嵌入）
     try:
-        close_pairs = _detect_close_pairs(cities, segments, INSET_THRESHOLD)
-        if close_pairs:
-            print(f"  检测到 {len(close_pairs)} 对过近城市")
-            clusters = _group_connected_pairs(close_pairs)
+        if zoom_clusters:
+            print(f"  {len(close_pairs)} 对过近城市 → 生成放大图")
 
-            for ci, cluster in enumerate(clusters):
+            for ci, cluster in enumerate(zoom_clusters):
                 extent_zoom = _compute_zoom_extent(
                     cluster, cities, INSET_PADDING)
                 if extent_zoom is None:
@@ -993,6 +1041,7 @@ def generate(cfg: dict) -> str:
                 fig_h_px = int(fig.get_figheight() * fig.get_dpi())
                 px_cx = int(fig_xy[0] * fig_w_px)
                 px_cy = int(fig_xy[1] * fig_h_px)
+                print(f"  [放大图] 位置: ({cx:.2f},{cy:.2f}) → fig({fig_xy[0]:.3f},{fig_xy[1]:.3f}) → px({px_cx},{px_cy})")
 
                 # 直接在 figure 画布上放置圆形 RGBA 图片（无 axes、无白边）
                 fig.figimage(
