@@ -2,7 +2,7 @@
 import math
 from typing import List, Tuple, Optional
 
-from config import CITY_RADIUS
+from config import CITY_RADIUS, ATTR_PRIM_COLOR, ATTR_SEC_COLOR
 
 
 class LayoutEngine:
@@ -28,6 +28,7 @@ class LayoutEngine:
     FONT_TIME = 14
     FONT_PRIM = 14
     FONT_SEC = 12
+    LINE_GAP = 0.10  # vertical gap between paired labels (day+city, dist+time)
 
     def __init__(self, px_per_deg: float = 200.0, output_dpi: float = 100.0):
         self.placed: List[Tuple[float, float, float, float, str]] = []
@@ -151,27 +152,38 @@ class LayoutEngine:
         """全局松弛：反复检测重叠并移位，直到无重叠。
 
         dist/time 作为配对一起移动。优先级：day > dist/time > attr。
+        优化：预计算标签类别、跳过同类型对（同优先级无法互移）。
         """
         PRIORITY = {"day": 0, "dist": 1, "time": 1, "attr": 2}
+        OVERLAP_MARGIN = self.LINE_GAP  # 0.10
         SEARCH_RING = [(d * math.cos(a), d * math.sin(a))
                        for d in (0.08, 0.16, 0.28, 0.45, 0.70, 1.0, 1.5)
                        for a in (0, math.pi/4, math.pi/2, 3*math.pi/4, math.pi,
                                  5*math.pi/4, 3*math.pi/2, 7*math.pi/4)]
+        SMALL_RING = [(d * math.cos(a), d * math.sin(a))
+                      for d in (0.04, 0.08, 0.12)
+                      for a in (0, math.pi/2, math.pi, 3*math.pi/2)]
 
-        def _find_partner(label, placed):
-            k = self._label_kind(label)
+        def _find_partner(label, placed, label_idx, kinds):
+            k = kinds[label_idx]
             if k in ("dist", "time"):
                 num = label.split("_")[1]
                 other = f"{'time' if k == 'dist' else 'dist'}_{num}"
-                for pi, (_, _, _, _, pl) in enumerate(placed):
-                    if pl == other:
+                for pi, p in enumerate(placed):
+                    if p[4] == other:
                         return pi, (k == "dist")
+            if k == "day":
+                for pi, (px, py, _, _, pl) in enumerate(placed):
+                    if pi == label_idx:
+                        continue
+                    if kinds[pi] == "day" and abs(py - placed[label_idx][1]) < self.LINE_GAP * 1.5:
+                        return pi, False
             return None, False
 
-        def _try_move(idx, cx, cy, hw, hh, label, ring, fixes_list, moved_set):
+        def _try_move(idx, cx, cy, hw, hh, label, ring, fixes_list, moved_set, kinds):
             for dx, dy in ring:
                 nx, ny = cx + dx, cy + dy
-                pidx, _ = _find_partner(label, self.placed)
+                pidx, _ = _find_partner(label, self.placed, idx, kinds)
                 pnx = pny = 0
                 if pidx is not None:
                     pnx = self.placed[pidx][0] + dx
@@ -180,14 +192,21 @@ class LayoutEngine:
                 for k, (px, py, phw, phh, pl) in enumerate(self.placed):
                     if k == idx or (pidx is not None and k == pidx):
                         continue
-                    mm = 0.10
-                    if abs(nx - px) < hw + phw + mm and abs(ny - py) < hh + phh + mm:
+                    # 快速跳过：距离过远不可能重叠的元素
+                    if abs(nx - px) >= hw + phw + OVERLAP_MARGIN or \
+                       abs(ny - py) >= hh + phh + OVERLAP_MARGIN:
+                        continue
+                    if abs(nx - px) < hw + phw + OVERLAP_MARGIN and \
+                       abs(ny - py) < hh + phh + OVERLAP_MARGIN:
                         ok_new = False; break
                     if pidx is not None:
-                        if abs(pnx - px) < self.placed[pidx][2] + phw + mm and \
-                           abs(pny - py) < self.placed[pidx][3] + phh + mm:
+                        if abs(pnx - px) >= self.placed[pidx][2] + phw + OVERLAP_MARGIN or \
+                           abs(pny - py) >= self.placed[pidx][3] + phh + OVERLAP_MARGIN:
+                            continue
+                        if abs(pnx - px) < self.placed[pidx][2] + phw + OVERLAP_MARGIN and \
+                           abs(pny - py) < self.placed[pidx][3] + phh + OVERLAP_MARGIN:
                             ok_new = False; break
-                if ok_new and not self.route_collision(nx, ny, hw, hh, 0.06):
+                if ok_new and not self.route_collision(nx, ny, hw, hh, self.MARGIN_PLACED):
                     fixes_list.append((idx, nx, ny))
                     moved_set.add(idx)
                     if pidx is not None:
@@ -201,28 +220,29 @@ class LayoutEngine:
             fixes = []
             moved = set()
             n = len(self.placed)
+            # 预计算所有标签类别，避免 O(n²) 次字符串操作
+            kinds = [self._label_kind(p[4]) for p in self.placed]
+
             for i in range(n):
                 if i in moved:
                     continue
                 cx, cy, hw, hh, label = self.placed[i]
-                my_kind = self._label_kind(label)
+                my_kind = kinds[i]
                 my_pri = PRIORITY.get(my_kind, 9)
                 for j in range(n):
                     if i == j or j in moved:
                         continue
-                    ox, oy, ohw, ohh, olabel = self.placed[j]
-                    ok = self._label_kind(olabel)
-                    if my_kind == "" or ok == "":
+                    # 同类型跳过：同优先级无法互移
+                    if my_kind == kinds[j] or my_kind == "" or kinds[j] == "":
                         continue
-                    if abs(cx - ox) < hw + ohw + 0.10 and abs(cy - oy) < hh + ohh + 0.10:
-                        if my_pri > PRIORITY.get(ok, 9):
-                            if _try_move(i, cx, cy, hw, hh, label, SEARCH_RING, fixes, moved):
+                    ox, oy, ohw, ohh = self.placed[j][:4]
+                    if abs(cx - ox) < hw + ohw + OVERLAP_MARGIN and \
+                       abs(cy - oy) < hh + ohh + OVERLAP_MARGIN:
+                        if my_pri > PRIORITY.get(kinds[j], 9):
+                            if _try_move(i, cx, cy, hw, hh, label, SEARCH_RING, fixes, moved, kinds):
                                 break
                             # 景点移不了->微调堵路的day/dist/time腾空间
-                            SMALL = [(d*math.cos(a), d*math.sin(a))
-                                     for d in (0.04, 0.08, 0.12) for a in
-                                     (0, math.pi/2, math.pi, 3*math.pi/2)]
-                            if _try_move(j, ox, oy, ohw, ohh, olabel, SMALL, fixes, moved):
+                            if _try_move(j, ox, oy, ohw, ohh, self.placed[j][4], SMALL_RING, fixes, moved, kinds):
                                 break
 
             if not fixes:
@@ -278,37 +298,6 @@ class LayoutEngine:
                     break
         return budged
 
-    def remove_by_prefix(self, prefix: str) -> list:
-        """移除并返回所有匹配前缀的已放置元素。返回 [(cx,cy,hw,hh,label),...]"""
-        removed = [p for p in self.placed if p[4].startswith(prefix)]
-        self.placed = [p for p in self.placed if not p[4].startswith(prefix)]
-        return removed
-
-    def fix_cross_type_overlaps(self, my_prefix: str):
-        """后置校验：移除与前缀不同且重叠的元素，用备选位置重新放置。
-
-        用于景点放置后检查：景点不能压天次/距离/时间。
-        返回修复数量。
-        """
-        fixed = 0
-        my_kind = self._label_kind(my_prefix)
-        other_items = [(cx, cy, hw, hh, pl) for cx, cy, hw, hh, pl in self.placed
-                       if self._label_kind(pl) and self._label_kind(pl) != my_kind]
-
-        to_remove = []
-        for cx, cy, hw, hh, pl in self.placed:
-            if not pl.startswith(my_prefix):
-                continue
-            for ox, oy, ohw, ohh, ol in other_items:
-                if abs(cx - ox) < hw + ohw + 0.04 and abs(cy - oy) < hh + ohh + 0.04:
-                    to_remove.append(pl)
-                    fixed += 1
-                    break
-
-        for label in to_remove:
-            self.placed = [p for p in self.placed if p[4] != label]
-        return fixed
-
     def register_route(self, x1: float, y1: float,
                        x2: float, y2: float,
                        half_width: float = 0.03) -> None:
@@ -317,17 +306,6 @@ class LayoutEngine:
         self.route_midpoints.append(((x1+x2)/2, (y1+y2)/2))
 
     # ── 辅助几何 ──
-
-    @staticmethod
-    def normal_offset(x1: float, y1: float, x2: float, y2: float,
-                      dist: float = 0.15, side: float = 1.0) -> Tuple[float, float]:
-        """返回垂直于路线的偏移量。side=1 右侧, side=-1 左侧。"""
-        dx, dy = x2 - x1, y2 - y1
-        length = math.hypot(dx, dy)
-        if length < 0.001:
-            return 0.0, 0.0
-        nx, ny = -dy / length * side, dx / length * side
-        return nx * dist, ny * dist
 
     def density_side(self, mx: float, my: float,
                      nx: float, ny: float,
@@ -353,7 +331,7 @@ class LayoutEngine:
                             margin: float = None,
                             route_margin: float = None,
                             my_kind: str = "") -> Optional[Tuple[float, float, int]]:
-        """在路线附近放置标签。先试中点垂线，再极小滑动（≤MAX_SLIDE_ABS°）。"""
+        """在路线附近放置标签。三阶段：中点垂线 → 滑动 → 远距离兜底。"""
         if margin is None:
             margin = self.MARGIN_LABEL
         if route_margin is None:
@@ -378,7 +356,7 @@ class LayoutEngine:
                                           x1, y1, x2, y2, my_kind):
                     return tx, ty, side
 
-        # 阶段2：沿路线滑动避开冲突（≤MAX_SLIDE_ABS°），仅在垂线堵死时
+        # 阶段2：沿路线滑动避开冲突（≤MAX_SLIDE_ABS°）
         max_slide = min(length * self.MAX_SLIDE_FRAC, self.MAX_SLIDE_ABS)
         for side in (preferred_side, -preferred_side):
             for along in (0.04, -0.04, 0.08, -0.08, 0.12, -0.12):
@@ -393,28 +371,28 @@ class LayoutEngine:
                                               x1, y1, x2, y2, my_kind):
                         return tx, ty, side
 
-        return None
+        # 阶段3：远距离兜底（放宽碰撞容差）
+        for side in (-1, 1):
+            for dist_mult in (2.5, 3.5, 4.5, 6.0, 8.0):
+                tx = mx + nx * min_dist * dist_mult * side
+                ty = my + ny * min_dist * dist_mult * side
+                if self.is_position_clear(tx, ty, hw, hh, self.MARGIN_PLACED / 2,
+                                          route_margin, x1, y1, x2, y2, my_kind):
+                    return tx, ty, side
+            # 最后的固定偏移尝试
+            tx = mx + nx * (self.ROUTE_HW * 3 + 0.1) * side
+            ty = my + ny * (self.ROUTE_HW * 3 + 0.1) * side
+            if self.is_position_clear(tx, ty, hw, hh, self.MARGIN_PLACED / 2,
+                                      route_margin, x1, y1, x2, y2, my_kind):
+                return tx, ty, side
 
-    def search_8dir(self, mx: float, my: float,
-                    hw: float, hh: float,
-                    margin: float = None) -> Optional[Tuple[float, float]]:
-        """8 方向 fallback 搜索。"""
-        if margin is None:
-            margin = self.MARGIN_PLACED
-        for angle_deg in (45, 135, 225, 315, 0, 90, 180, 270):
-            rad = math.radians(angle_deg)
-            for dist in (0.25, 0.35, 0.50):
-                tx = mx + dist * math.cos(rad)
-                ty = my + dist * math.sin(rad)
-                if self.is_position_clear(tx, ty, hw, hh, margin):
-                    return tx, ty
         return None
 
     # ── 天次放置 ──
 
     def place_travel_day(self, text: str, seg_indices: List[int],
                          all_segments: list, cities: list) -> Tuple[float, float, str]:
-        """放置行车段天次——段中点垂线上，不滑动。"""
+        """放置行车段天次——段中点垂线上。"""
         segs = [all_segments[si] for si in seg_indices]
         if len(segs) == 1:
             s = segs[0]
@@ -439,50 +417,22 @@ class LayoutEngine:
         last = segs[-1]
         x1, y1 = cities[last["from_index"]]["lon"], cities[last["from_index"]]["lat"]
         x2, y2 = cities[last["to_index"]]["lon"], cities[last["to_index"]]["lat"]
-        dx, dy = x2 - x1, y2 - y1
-        length = max(math.hypot(dx, dy), 1e-6)
-        nx, ny = -dy / length, dx / length
 
         hw, hh = self.text_half_size(text, self.FONT_DAY)
-        # 天次固定右侧，距离/时间固定左侧，永久分隔
+        # 天次固定右侧（1），三阶段级联 place_perpendicular 覆盖所有距离
         result = self.place_perpendicular(mx, my, x1, y1, x2, y2, hw, hh, 1,
                                           my_kind="day")
         if result:
             tx, ty, side = result
-            ha = "left" if side > 0 else "right"
-            self.place(tx, ty, hw, hh, f"day_{text}")
-            return tx, ty, ha
+        else:
+            # 最终兜底：放弃碰撞检测
+            tx = mx + 0.2
+            ty = my + 0.15
+            side = 1
 
-        # Fallback: 远距离
-        r_eff = abs(nx) * hw + abs(ny) * hh
-        min_dist = self.ROUTE_HW + r_eff + self.MIN_DIST_EXTRA
-        for side in (-1, 1):
-            for dist_mult in (2.5, 3.5):
-                tx = mx + nx * min_dist * dist_mult * side
-                ty = my + ny * min_dist * dist_mult * side
-                if self.is_position_clear(tx, ty, hw, hh, 0.03, self.MARGIN_ROUTE,
-                                         my_kind="day"):
-                    ha = "left" if side > 0 else "right"
-                    self.place(tx, ty, hw, hh, f"day_{text}")
-                    return tx, ty, ha
-        # 扩大搜索再试
-        for side in (-1, 1):
-            for dist_mult in (4.5, 6.0, 8.0):
-                tx = mx + nx * min_dist * dist_mult * side
-                ty = my + ny * min_dist * dist_mult * side
-                if self.is_position_clear(tx, ty, hw, hh, 0.03, self.MARGIN_ROUTE,
-                                         my_kind="day"):
-                    ha = "left" if side > 0 else "right"
-                    self.place(tx, ty, hw, hh, f"day_{text}")
-                    return tx, ty, ha
-        tx, ty = mx + nx * self.ROUTE_HW * 3 + 0.1, my + ny * self.ROUTE_HW * 3 + 0.1
-        if self.is_position_clear(tx, ty, hw, hh, 0.03, self.MARGIN_ROUTE,
-                                  my_kind="day"):
-            self.place(tx, ty, hw, hh, f"day_{text}")
-            return tx, ty, "left"
-        # 彻底放弃碰撞检测
+        ha = "left" if side > 0 else "right"
         self.place(tx, ty, hw, hh, f"day_{text}")
-        return tx, ty, "left"
+        return tx, ty, ha
 
     def place_rest_day(self, day_num: str, city_name: str,
                        cities: list, crs_cos: float,
@@ -504,7 +454,7 @@ class LayoutEngine:
 
         hw_d, hh_d = self.text_half_size(disp_day, self.FONT_DAY)
         hw_c, hh_c = self.text_half_size(disp_city, self.FONT_DIST)
-        LINE = 0.10
+        LINE = self.LINE_GAP
 
         def pair_ok(bx: float, by: float) -> bool:
             for px, py, phw, phh, pl in self.placed:
@@ -537,22 +487,47 @@ class LayoutEngine:
                 self.place(clon, clat - dy - LINE, hw_c, hh_c, f"day_{disp_city}")
                 return clon, clat - dy, "center", clon, clat - dy - LINE
 
-        # Fallback: 8 方向
-        for angle_deg in (0, 180, 90, 270, 45, 135, 225, 315):
-            rad = math.radians(angle_deg)
-            tx = clon + 0.5 * math.cos(rad)
-            ty = clat + 0.5 * math.sin(rad)
-            if pair_ok(tx, ty):
-                ha = "center" if abs(math.cos(rad)) < 0.1 else ("left" if math.cos(rad) > 0 else "right")
-                self.place(tx, ty, hw_d, hh_d, f"day_{disp_day}")
-                self.place(tx, ty - LINE, hw_c, hh_c, f"day_{disp_city}")
-                return tx, ty, ha, tx, ty - LINE
+        # 下→(左/右/上中最空的)→8方向
+        candidates = []
+        for side_name, bx_fn, by_fn, ha_val in [
+            ("左", lambda d: clon - (cr + d), lambda: clat, "right"),
+            ("右", lambda d: clon + (cr + d), lambda: clat, "left"),
+            ("上", lambda: clon, lambda d: clat + (cr + d), "center"),
+        ]:
+            for offset in (0.08, 0.12, 0.18, 0.25, 0.35, 0.50):
+                if side_name == "上":
+                    bx, by = bx_fn(), by_fn(offset)
+                else:
+                    bx, by = bx_fn(offset), by_fn()
+                if pair_ok(bx, by):
+                    score = offset  # 越小越好（越近）
+                    candidates.append((score, bx, by, ha_val))
+                    break  # 此方向找到最近的就停
 
-        # 最终 fallback
-        tx, ty = clon, clat - 0.5
+        if candidates:
+            candidates.sort()  # 选最近的
+            score, bx, by, ha_val = candidates[0]
+            self.place(bx, by, hw_d, hh_d, f"day_{disp_day}")
+            self.place(bx, by - LINE, hw_c, hh_c, f"day_{disp_city}")
+            return bx, by, ha_val, bx, by - LINE
+
+        # 最终 8 方向 fallback
+        for angle_deg in (0, 90, 180, 270, 45, 135, 225, 315):
+            rad = math.radians(angle_deg)
+            for dist in (0.35, 0.55, 0.80):
+                tx = clon + dist * math.cos(rad)
+                ty = clat + dist * math.sin(rad)
+                if pair_ok(tx, ty):
+                    ha = "center" if abs(math.cos(rad)) < 0.1 else ("left" if math.cos(rad) > 0 else "right")
+                    self.place(tx, ty, hw_d, hh_d, f"day_{disp_day}")
+                    self.place(tx, ty - LINE, hw_c, hh_c, f"day_{disp_city}")
+                    return tx, ty, ha, tx, ty - LINE
+
+        # 最后手段
+        tx, ty = clon + 0.5, clat
         self.place(tx, ty, hw_d, hh_d, f"day_{disp_day}")
         self.place(tx, ty - LINE, hw_c, hh_c, f"day_{disp_city}")
-        return tx, ty, "center", tx, ty - LINE
+        return tx, ty, "left", tx, ty - LINE
 
     # ── 距离/时间放置 ──
 
@@ -570,7 +545,7 @@ class LayoutEngine:
 
         hw_d, hh_d = self.text_half_size(dist_text, self.FONT_DIST)
         hw_t, hh_t = self.text_half_size(time_text, self.FONT_TIME)
-        LINE = 0.10
+        LINE = self.LINE_GAP
 
         r_eff = abs(nx) * hw_d + abs(ny) * hh_d
         min_dist = self.ROUTE_HW + r_eff + self.MIN_DIST_EXTRA
@@ -784,10 +759,10 @@ class LayoutEngine:
         items = []
         for n in prim_names[:2]:
             hw, hh = self.text_half_size(n, self.FONT_PRIM)
-            items.append((n, hw, hh, "#8B4513", self.FONT_PRIM, "prim"))
+            items.append((n, hw, hh, ATTR_PRIM_COLOR, self.FONT_PRIM, "prim"))
         for n in sec_names[:2]:
             hw, hh = self.text_half_size(n, self.FONT_SEC)
-            items.append((n, hw, hh, "#27AE60", self.FONT_SEC, "sec"))
+            items.append((n, hw, hh, ATTR_SEC_COLOR, self.FONT_SEC, "sec"))
 
         if not items:
             return None

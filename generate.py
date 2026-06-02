@@ -22,6 +22,7 @@ import cartopy.crs as ccrs
 from config import (
     load_config, CITY_RADIUS,
     EN_PROV_MAP, PROV_CN_NAMES, PROVINCE_COLORS,
+    ATTR_PRIM_COLOR,
 )
 from layout import LayoutEngine
 from renderer import (
@@ -301,7 +302,7 @@ def _place_attractions(layout: LayoutEngine, cities: list) -> list:
             if items:
                 items_meta = []
                 for i, (bx, ty, name, color, sz, ha, edge_x, edge_y) in enumerate(items):
-                    kind = "prim" if color == "#8B4513" else "sec"
+                    kind = "prim" if color == ATTR_PRIM_COLOR else "sec"
                     label_key = f"attr_{idx}_{kind}_{i}"
                     items_meta.append({
                         "label_key": label_key,

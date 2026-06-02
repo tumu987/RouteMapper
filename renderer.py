@@ -12,11 +12,13 @@ import cartopy.crs as ccrs
 import cartopy.feature as cfeature
 from cartopy.io import shapereader
 from shapely.geometry import box
-from typing import Any, Dict, List, Tuple, Optional, Set
+from typing import Any, Dict, List, Set
 
 from config import (
     CITY_RADIUS, DAY_LABEL_COLOR, DIST_COLOR, TIME_COLOR,
-    ITINERARY_COLOR, TITLE_COLOR, SUBTITLE_COLOR, _count_total_days,
+    ITINERARY_COLOR, TITLE_COLOR, SUBTITLE_COLOR,
+    ATTR_PRIM_COLOR, ATTR_SEC_COLOR, LEADER_LINE_COLOR, TITLE_SEP_COLOR,
+    _count_total_days,
 )
 
 # ── 字体 ──
@@ -81,7 +83,7 @@ def render_base_map(ax: Any, extent: List[float]) -> None:
     ax.add_feature(cfeature.OCEAN, facecolor="#E8EDF4", zorder=1)
     ax.add_feature(cfeature.LAKES, facecolor="#DAE5F0",
                    edgecolor="#AABBCC", linewidth=1.0, zorder=2)
-    ax.add_feature(cfeature.COASTLINE, edgecolor="#999999",
+    ax.add_feature(cfeature.COASTLINE, edgecolor=LEADER_LINE_COLOR,
                    linewidth=2.0, zorder=3)
     ax.add_feature(cfeature.BORDERS, edgecolor="#888888",
                    linewidth=1.5, alpha=0.6, zorder=3)
@@ -249,7 +251,7 @@ def render_attraction_outside(ax: Any, name: str, alat: float, alon: float,
                                is_primary: bool, x: float, y: float,
                                ha: str, leader_info: dict) -> None:
     """渲染城圈外景点：打点 + 紧邻标签 + 可选折线引线。"""
-    color = "#8B4513" if is_primary else "#27AE60"
+    color = ATTR_PRIM_COLOR if is_primary else ATTR_SEC_COLOR
     sz = 14 if is_primary else 12
     mfc = color if is_primary else "none"
 
@@ -293,10 +295,10 @@ def render_grouped_attractions(ax: Any, items: List[tuple],
     # 拐点x：斜线延伸到60%处；拐点y对齐水平线
     knee_x = edge_x + (bx - edge_x) * 0.6
     # 斜线：城圈边缘 → 拐点（拐点y=mid_y，确保连接）
-    ax.plot([edge_x, knee_x], [edge_y, mid_y], color="#999999",
+    ax.plot([edge_x, knee_x], [edge_y, mid_y], color=LEADER_LINE_COLOR,
             linewidth=1.0, alpha=0.5, transform=ccrs.PlateCarree(), zorder=15)
     # 水平线：拐点 → 文字
-    ax.plot([knee_x, bx], [mid_y, mid_y], color="#999999",
+    ax.plot([knee_x, bx], [mid_y, mid_y], color=LEADER_LINE_COLOR,
             linewidth=1.0, alpha=0.5, transform=ccrs.PlateCarree(), zorder=15)
 
     for x, y, name, color, sz, ha_text, edge_x2, edge_y2 in items:
@@ -336,7 +338,7 @@ def render_title(ax: Any, cfg: Dict[str, Any]) -> None:
             ha="center", va="top", transform=ax.transAxes,
             zorder=100, path_effects=ST(4))
 
-    ax.plot([0.05, 0.95], [0.945, 0.945], color='#CCCCCC', linewidth=1,
+    ax.plot([0.05, 0.95], [0.945, 0.945], color=TITLE_SEP_COLOR, linewidth=1,
             transform=ax.transAxes, zorder=100)
 
 
