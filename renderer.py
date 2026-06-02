@@ -353,3 +353,88 @@ def render_itinerary(ax: Any, lines: List[str], cx: float, cy: float,
         ax.text(cx, yy, line, fontproperties=F(font_size),
                 color=ITINERARY_COLOR, ha="left", va="top",
                 zorder=95, path_effects=ST(1.5))
+
+
+# ── 局部放大图 ──
+
+def render_zoom_inset_content(ax: Any, extent_zoom: list,
+                               cluster_indices: set,
+                               cities: list, segments: list,
+                               day_colors: dict) -> None:
+    """在给定的 axes 上渲染放大图内容。
+
+    包含：底图 + 省界 + 簇内城市节点 + 簇内路线段 + 景点。
+    字体比主图小一号（×0.75）。
+
+    Args:
+        ax: 已创建并设好 extent 的 inset axes（PlateCarree 投影）
+        extent_zoom: 放大区域范围
+        cluster_indices: 簇内城市索引集合
+        cities: 全部城市列表
+        segments: 全部路线段列表
+        day_colors: 天次颜色映射
+    """
+    from config import PROVINCE_COLORS, EN_PROV_MAP, PROV_CN_NAMES
+
+    # 底图
+    render_base_map(ax, extent_zoom)
+    # 省界（在放大范围内）
+    render_provinces(ax, extent_zoom, PROVINCE_COLORS,
+                     EN_PROV_MAP, PROV_CN_NAMES)
+
+    # 字体缩放
+    font_city = 12   # 16 × 0.75
+    font_prim = 10   # 14 × 0.75
+    font_sec = 9     # 12 × 0.75
+
+    # 簇内城市节点
+    cluster_cities = {idx: cities[idx] for idx in cluster_indices}
+    avg_lat = (sum(c["lat"] for c in cluster_cities.values()) /
+               len(cluster_cities)) if cluster_cities else 45
+    crs_cos_local = math.cos(math.radians(avg_lat))
+
+    for idx, c in cluster_cities.items():
+        # 城市椭圆
+        r = CITY_RADIUS
+        ax.add_patch(Ellipse(
+            (c["lon"], c["lat"]), width=2 * r, height=2 * r * crs_cos_local,
+            facecolor="white", edgecolor=c.get("color", "#888888"),
+            linewidth=3, transform=ccrs.PlateCarree(), zorder=20,
+        ))
+        ax.text(c["lon"], c["lat"], c["name"],
+                fontproperties=F(font_city), color=c.get("color", "#888888"),
+                ha="center", va="center", zorder=21, path_effects=ST(3))
+
+        # 景点直接绘制在真实坐标附近（简化布局，不做碰撞检测）
+        for is_prim, attr_key in [(True, "attractions_primary"),
+                                   (False, "attractions_secondary")]:
+            color = ATTR_PRIM_COLOR if is_prim else ATTR_SEC_COLOR
+            sz = font_prim if is_prim else font_sec
+            for a in c.get(attr_key, []):
+                try:
+                    alon, alat = float(a["lon"]), float(a["lat"])
+                except (ValueError, TypeError):
+                    continue
+                # 打点
+                ax.plot(alon, alat, "o", color=color, markersize=4,
+                        markerfacecolor=color if is_prim else "none",
+                        markeredgewidth=1.5,
+                        transform=ccrs.PlateCarree(), zorder=16)
+                # 标签：直接放在坐标旁
+                ax.text(alon + 0.03, alat + 0.02, a["name"],
+                        fontproperties=F(sz), color=color,
+                        ha="left", va="bottom", zorder=17,
+                        path_effects=ST(2))
+
+    # 簇内路线段
+    for seg in segments:
+        fi, ti = seg["from_index"], seg["to_index"]
+        if fi in cluster_indices and ti in cluster_indices:
+            day = seg["day"]
+            color = day_colors.get(str(day), "#888888")
+            render_route_segment(
+                ax,
+                cities[fi]["lon"], cities[fi]["lat"],
+                cities[ti]["lon"], cities[ti]["lat"],
+                color,
+            )
