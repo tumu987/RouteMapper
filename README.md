@@ -1,4 +1,4 @@
-# 自驾路线图生成引擎 v0.1.0
+# RouteMapper v0.1.0
 
 基于 Python + Cartopy + Matplotlib，从 JSON 配置文件生成高分辨率自驾路线图。
 
