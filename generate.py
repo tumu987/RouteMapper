@@ -185,20 +185,16 @@ def _group_connected_pairs(pairs: list) -> list:
 
 def _compute_zoom_extent(cluster_indices: set, cities: list,
                          padding: float) -> list:
-    """计算放大区域范围（以簇中心为圆心，覆盖最远点 + padding）。
-
-    返回正方形 extent，适合圆形放大镜显示。
-
-    Args:
-        cluster_indices: 城市索引集合
-        cities: 城市列表
-        padding: 半径外扩倍率（>1 扩大，<1 缩小）
+    """计算放大镜的地理范围。
 
     Returns:
-        [lon_min, lon_max, lat_min, lat_max] 或 None
+        [lon_min, lon_max, lat_min, lat_max, zoom_radius]
+        zoom_radius：圆内实际展示的地理半径。
+        渲染半径 = zoom_radius * RENDER_MARGIN（方图比圆大一倍）。
     """
-    all_lons = []
-    all_lats = []
+    from config import ZOOM_FACTOR, RENDER_MARGIN
+
+    all_lons, all_lats = [], []
     for idx in cluster_indices:
         c = cities[idx]
         all_lons.append(c["lon"])
@@ -216,93 +212,62 @@ def _compute_zoom_extent(cluster_indices: set, cities: list,
 
     center_lon = (min(all_lons) + max(all_lons)) / 2
     center_lat = (min(all_lats) + max(all_lats)) / 2
-
-    # 计算覆盖所有点的最小半径
     max_dist = 0.0
     for lon, lat in zip(all_lons, all_lats):
         d = math.hypot(lon - center_lon, lat - center_lat)
-        if d > max_dist:
-            max_dist = d
-    radius = max(max_dist * padding, 0.15)
+        max_dist = max(max_dist, d)
 
-    # 正方形 extent（保证圆形不裁剪）
+    base_radius = max(max_dist * padding, 0.15)
+    zoom_radius = base_radius * 5 / ZOOM_FACTOR
+    zoom_radius = max(zoom_radius, max_dist * 1.3)
+    render_radius = zoom_radius * RENDER_MARGIN
+
     return [
-        round(center_lon - radius, 3),
-        round(center_lon + radius, 3),
-        round(center_lat - radius, 3),
-        round(center_lat + radius, 3),
+        round(center_lon - render_radius, 3),
+        round(center_lon + render_radius, 3),
+        round(center_lat - render_radius, 3),
+        round(center_lat + render_radius, 3),
+        zoom_radius,
     ]
 
 
 def _place_zoom_inset(layout: LayoutEngine,
                       extent_zoom: list,
                       main_extent: list,
-                      crs_cos: float) -> tuple:
-    """螺旋搜索空白区域放置放大图。
-
-    从放大区域的中心出发，螺旋式向外搜索，直到找到
-    不与已有元素冲突的位置。
-
-    Args:
-        layout: 布局引擎
-        extent_zoom: 放大区域 [lon_min, lon_max, lat_min, lat_max]
-        main_extent: 主图范围
-        crs_cos: 纬度余弦补偿
+                      crs_cos: float,
+                      inset_fig_w: float = 0.32) -> tuple:
+    """螺旋搜索空白区域放置放大镜。避开行程表。
 
     Returns:
-        (center_lon, center_lat, half_w, half_h) 永远返回有效位置
+        (center_lon, center_lat, half_w, half_h)
+    回退: 缩小 20% 重搜一轮；仍失败返回 (None,None,0,0)。
     """
-    inset_fig_w = 0.22   # 嵌入后 ≈4.4x 放大，不压主图内容
-    map_lon_span = main_extent[1] - main_extent[0]
-    map_lat_span = main_extent[3] - main_extent[2]
+    for attempt, scale in enumerate([1.0, 0.8]):
+        inset_hw = (inset_fig_w * scale) * (main_extent[1] - main_extent[0]) / (2 * 0.98)
+        inset_hh = (inset_fig_w * scale) * (main_extent[3] - main_extent[2]) / (2 * 0.98)
 
-    zoom_lon_span = extent_zoom[1] - extent_zoom[0]
-    zoom_lat_span = extent_zoom[3] - extent_zoom[2]
+        center_lon = (extent_zoom[0] + extent_zoom[1]) / 2
+        center_lat = (extent_zoom[2] + extent_zoom[3]) / 2
 
-    zoom_ratio = (zoom_lat_span / (zoom_lon_span * crs_cos)) if zoom_lon_span > 0 else 1.0
-    inset_fig_h = inset_fig_w * zoom_ratio
-    inset_fig_h = max(0.15, min(0.35, inset_fig_h))
+        for step in range(1, 20):
+            radius = 1.5 + step * 0.3
+            for ang_idx in range(8):
+                angle = math.radians(ang_idx * 45 + step * 15)
+                cx = center_lon + radius * math.cos(angle)
+                cy = center_lat + radius * math.sin(angle)
 
-    inset_hw = (inset_fig_w * map_lon_span / 0.98) / 2
-    inset_hh = (inset_fig_h * map_lat_span / 0.98) / 2
+                if not (main_extent[0] + inset_hw < cx < main_extent[1] - inset_hw):
+                    continue
+                if not (main_extent[2] + inset_hh < cy < main_extent[3] - inset_hh):
+                    continue
 
-    center_lon = (extent_zoom[0] + extent_zoom[1]) / 2
-    center_lat = (extent_zoom[2] + extent_zoom[3]) / 2
+                if layout.is_position_clear(cx, cy, inset_hw, inset_hh,
+                                            margin=0.05, my_kind="inset"):
+                    layout.place(cx, cy, inset_hw, inset_hh,
+                                f"inset_{center_lon:.2f}")
+                    return cx, cy, inset_hw, inset_hh
 
-    for step in range(1, 20):
-        radius = 1.5 + step * 0.3  # 从远处开始搜，避免压主图
-        for ang_idx in range(8):
-            angle = math.radians(ang_idx * 45 + step * 15)
-            cx = center_lon + radius * math.cos(angle)
-            cy = center_lat + radius * math.sin(angle)
-
-            if not (main_extent[0] + inset_hw < cx < main_extent[1] - inset_hw):
-                continue
-            if not (main_extent[2] + inset_hh < cy < main_extent[3] - inset_hh):
-                continue
-
-            if layout.is_position_clear(cx, cy, inset_hw, inset_hh,
-                                        margin=0.05, my_kind="inset"):
-                layout.place(cx, cy, inset_hw, inset_hh,
-                            f"inset_{center_lon:.2f}_{center_lat:.2f}")
-                return cx, cy, inset_hw, inset_hh
-
-    # 回退：放到被放大区域的对角侧
-    left_side = center_lon > (main_extent[0] + main_extent[1]) / 2
-    top_side = center_lat > (main_extent[2] + main_extent[3]) / 2
-    # 放在地图的对角：左上/右下/左下/右上
-    fallback_corners = [
-        (main_extent[0] + inset_hw + 0.3, main_extent[3] - inset_hh - 0.3),  # 左上
-        (main_extent[1] - inset_hw - 0.3, main_extent[2] + inset_hh + 0.3),  # 右下
-        (main_extent[0] + inset_hw + 0.3, main_extent[2] + inset_hh + 0.3),  # 左下
-        (main_extent[1] - inset_hw - 0.3, main_extent[3] - inset_hh - 0.3),  # 右上
-    ]
-    # 选离 center 最远的角
-    cx, cy = max(fallback_corners,
-                 key=lambda p: math.hypot(p[0] - center_lon, p[1] - center_lat))
-    layout.place(cx, cy, inset_hw, inset_hh,
-                f"inset_fb_{center_lon:.2f}")
-    return cx, cy, inset_hw, inset_hh
+    return None, None, 0, 0
 
 
 def _detect_city_provinces(cities: list) -> dict:
@@ -885,9 +850,7 @@ def _render_zoom_pipeline(ax, extent_zoom: list,
     attr_recipes = _place_attractions(layout, local_cities,
                                       city_radius=zoom_city_radius)
 
-    # 全局松弛（范围 0.5°+ 足够，不会推到外面）
-    layout.relax_overlaps()
-
+    # 不松弛：方图比圆大一倍，标注天然分散
     # 渲染
     _render_day_items(ax, layout, day_recipes)
     _render_attr_items(ax, layout, attr_recipes)
@@ -975,10 +938,12 @@ def generate(cfg: dict) -> str:
             print(f"  {len(close_pairs)} 对过近城市 → 生成放大图")
 
             for ci, cluster in enumerate(zoom_clusters):
-                extent_zoom = _compute_zoom_extent(
+                result = _compute_zoom_extent(
                     cluster, cities, INSET_PADDING)
-                if extent_zoom is None:
+                if result is None:
                     continue
+                extent_zoom = result[:4]
+                zoom_radius = result[4]  # 圆内实际展示范围的半径
 
                 # ── 创建独立 figure 渲染放大图 ──
                 zoom_dpi = output["dpi"]
@@ -1017,31 +982,35 @@ def generate(cfg: dict) -> str:
                 buf = np.array(zoom_fig.canvas.renderer.buffer_rgba())
                 plt.close(zoom_fig)
 
-                # 圆形 mask（外圈透明，红色边框）
+                # 圆形 mask：渲染范围 = render_r, 圆展示范围 = zoom_r
                 h, w = buf.shape[:2]
                 y, x_arr = np.ogrid[:h, :w]
                 cx_px, cy_px = w / 2, h / 2
-                out_r = min(w, h) / 2           # 外半径
-                in_r = out_r - 3                 # 内半径（3px 红色环）
+                render_r = (extent_zoom[1] - extent_zoom[0]) / 2  # 渲染半径(°)
+                # 圆在像素空间中的半径（方图大的范围，圆只取中心部分）
+                circle_r_px = (min(w, h) / 2) * (zoom_radius / render_r)
+                ring_w = 3  # 红色环宽度 px
                 dist = np.sqrt((x_arr - cx_px)**2 + (y - cy_px)**2)
                 # 圈外透明
-                buf[dist >= out_r] = [0, 0, 0, 0]
+                buf[dist >= circle_r_px] = [0, 0, 0, 0]
                 # 红色环
-                ring = (dist >= in_r) & (dist < out_r)
+                ring = (dist >= circle_r_px - ring_w) & (dist < circle_r_px)
                 buf[ring] = [228, 60, 60, 255]  # #E74C3C
 
-                # ── 螺旋搜索放置位置（地图坐标） → figure 像素坐标 ──
+                # ── 螺旋搜索放置位置 ──
                 cx, cy, hw, hh = _place_zoom_inset(
                     layout, extent_zoom, extent, crs_cos)
+                if cx is None:
+                    print(f"  放大镜{ci+1}: 无合适位置，跳过")
+                    continue
 
-                # 地图坐标 → figure 坐标 → 像素
+                # 地图坐标 → figure 像素坐标
                 disp_xy = ax.transData.transform((cx, cy))
                 fig_xy = fig.transFigure.inverted().transform(disp_xy)
                 fig_w_px = int(fig.get_figwidth() * fig.get_dpi())
                 fig_h_px = int(fig.get_figheight() * fig.get_dpi())
                 px_cx = int(fig_xy[0] * fig_w_px)
                 px_cy = int(fig_xy[1] * fig_h_px)
-                print(f"  [放大图] 位置: ({cx:.2f},{cy:.2f}) → fig({fig_xy[0]:.3f},{fig_xy[1]:.3f}) → px({px_cx},{px_cy})")
 
                 # 直接在 figure 画布上放置圆形 RGBA 图片（无 axes、无白边）
                 fig.figimage(
@@ -1052,8 +1021,8 @@ def generate(cfg: dict) -> str:
                     zorder=99,
                 )
 
-                # ── 主图标记：虚线圆 + 连接线 ──
-                render_zoom_indicator(ax, extent_zoom, cx, cy, hw, hh, crs_cos)
+                # ── 主图虚线圆选取框 ──
+                render_zoom_indicator(ax, extent_zoom, zoom_radius, crs_cos)
 
                 city_names = [cities[i]["name"] for i in sorted(cluster)]
                 print(f"  放大图{ci+1}: {'+'.join(city_names)} -> "
