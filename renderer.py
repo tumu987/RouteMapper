@@ -438,3 +438,67 @@ def render_zoom_inset_content(ax: Any, extent_zoom: list,
                 cities[ti]["lon"], cities[ti]["lat"],
                 color,
             )
+
+
+def render_zoom_indicator(ax_main: Any, extent_zoom: list,
+                          inset_ax: Any, color: str = "#E74C3C") -> None:
+    """在主图上绘制放大区域标记和连接线。
+
+    虚线矩形标记放大范围 + 从矩形角到放大图边框角的连接线。
+
+    Args:
+        ax_main: 主图 axes
+        extent_zoom: 放大区域 [lon_min, lon_max, lat_min, lat_max]
+        inset_ax: 放大图 axes（用于获取其位置）
+        color: 标记颜色
+    """
+    lon_min, lon_max, lat_min, lat_max = extent_zoom
+
+    # 虚线矩形标记放大范围
+    rect_lons = [lon_min, lon_max, lon_max, lon_min, lon_min]
+    rect_lats = [lat_min, lat_min, lat_max, lat_max, lat_min]
+    ax_main.plot(rect_lons, rect_lats, color=color, linewidth=1.5,
+                 linestyle="--", transform=ccrs.PlateCarree(),
+                 zorder=98, alpha=0.7)
+
+    # 获取 inset axes 在图形坐标中的边框四角
+    inset_bbox = inset_ax.get_position()
+
+    # 虚线框四角（地图坐标）
+    corners_map = [(lon_min, lat_min), (lon_max, lat_min),
+                   (lon_max, lat_max), (lon_min, lat_max)]
+
+    # inset 在图形坐标中的四角
+    inset_corners_fig = [
+        (inset_bbox.x0, inset_bbox.y0),
+        (inset_bbox.x1, inset_bbox.y0),
+        (inset_bbox.x1, inset_bbox.y1),
+        (inset_bbox.x0, inset_bbox.y1),
+    ]
+
+    # 找最近的角对 → 画两条连接线
+    fig = ax_main.figure
+    pairs = []
+    for ci, (mlon, mlat) in enumerate(corners_map):
+        mx, my = ax_main.transData.transform((mlon, mlat))
+        mxf, myf = fig.transFigure.inverted().transform((mx, my))
+        for ii, (ixf, iyf) in enumerate(inset_corners_fig):
+            dist = math.hypot(mxf - ixf, myf - iyf)
+            pairs.append((dist, ci, ii, mlon, mlat, ixf, iyf))
+
+    pairs.sort()
+    used_map = set()
+    used_inset = set()
+    for _, ci, ii, mlon, mlat, ixf, iyf in pairs:
+        if ci not in used_map and ii not in used_inset:
+            used_map.add(ci)
+            used_inset.add(ii)
+            ax_main.annotate(
+                "", xy=(ixf, iyf), xycoords="figure fraction",
+                xytext=(mlon, mlat), textcoords=ccrs.PlateCarree(),
+                arrowprops=dict(arrowstyle="-", color=color,
+                               linewidth=1, alpha=0.5, ls="--"),
+                zorder=97,
+            )
+        if len(used_map) >= 2:
+            break
