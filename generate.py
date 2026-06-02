@@ -185,15 +185,14 @@ def _group_connected_pairs(pairs: list) -> list:
 
 def _compute_zoom_extent(cluster_indices: set, cities: list,
                          padding: float) -> list:
-    """计算放大区域范围。
+    """计算放大区域范围（以簇中心为圆心，覆盖最远点 + padding）。
 
-    收集簇内所有城市 + 景点坐标的 bbox，按 padding 倍率外扩。
-    宽高比 clamp 到 [0.4, 2.5] 防止极端扁平。
+    返回正方形 extent，适合圆形放大镜显示。
 
     Args:
         cluster_indices: 城市索引集合
         cities: 城市列表
-        padding: 外扩倍率（>1 扩大，<1 缩小）
+        padding: 半径外扩倍率（>1 扩大，<1 缩小）
 
     Returns:
         [lon_min, lon_max, lat_min, lat_max] 或 None
@@ -215,29 +214,23 @@ def _compute_zoom_extent(cluster_indices: set, cities: list,
     if not all_lons:
         return None
 
-    lon_center = (min(all_lons) + max(all_lons)) / 2
-    lat_center = (min(all_lats) + max(all_lats)) / 2
-    lon_span = (max(all_lons) - min(all_lons)) * padding
-    lat_span = (max(all_lats) - min(all_lats)) * padding
+    center_lon = (min(all_lons) + max(all_lons)) / 2
+    center_lat = (min(all_lats) + max(all_lats)) / 2
 
-    # 确保最小跨度（至少 0.3°）
-    lon_span = max(lon_span, 0.3)
-    lat_span = max(lat_span, 0.2)
+    # 计算覆盖所有点的最小半径
+    max_dist = 0.0
+    for lon, lat in zip(all_lons, all_lats):
+        d = math.hypot(lon - center_lon, lat - center_lat)
+        if d > max_dist:
+            max_dist = d
+    radius = max(max_dist * padding, 0.15)
 
-    # 宽高比 clamp
-    avg_lat = sum(all_lats) / len(all_lats)
-    cos_lat = math.cos(math.radians(avg_lat))
-    ratio = (lon_span * cos_lat) / lat_span if lat_span > 0 else 1.0
-    if ratio > 2.5:
-        lon_span = lat_span * 2.5 / cos_lat
-    elif ratio < 0.4:
-        lat_span = lon_span * cos_lat / 0.4
-
+    # 正方形 extent（保证圆形不裁剪）
     return [
-        round(lon_center - lon_span / 2, 3),
-        round(lon_center + lon_span / 2, 3),
-        round(lat_center - lat_span / 2, 3),
-        round(lat_center + lat_span / 2, 3),
+        round(center_lon - radius, 3),
+        round(center_lon + radius, 3),
+        round(center_lat - radius, 3),
+        round(center_lat + radius, 3),
     ]
 
 
@@ -259,7 +252,7 @@ def _place_zoom_inset(layout: LayoutEngine,
     Returns:
         (center_lon, center_lat, half_w, half_h) 永远返回有效位置
     """
-    inset_fig_w = 0.25
+    inset_fig_w = 0.15
     map_lon_span = main_extent[1] - main_extent[0]
     map_lat_span = main_extent[3] - main_extent[2]
 
@@ -743,6 +736,125 @@ def _render_dt_items(ax, layout, recipes: list) -> None:
 
 
 # ═══════════════════════════════════════════════════════════════════
+# 放大图子管道：在独立 figure 上运行完整布局引擎
+# ═══════════════════════════════════════════════════════════════════
+
+def _render_zoom_pipeline(ax, extent_zoom: list,
+                          cluster: set, cities: list, segments: list,
+                          day_colors: dict, output: dict) -> None:
+    """在给定 axes 上运行完整生成管道。
+
+    只处理簇内城市（景点、标注），外部连线只画路线不标注。
+    """
+    # 只取簇内城市
+    cluster_list = sorted(cluster)
+
+    # 局部城市列表 + index 映射
+    local_cities = [cities[i] for i in cluster_list]
+    idx_map = {old: new for new, old in enumerate(cluster_list)}
+
+    # 段：两端都在簇内 → 完整标注；一端在簇内 → 只画线
+    local_segs = []     # 完整标注
+    external_segs = []  # 只画线
+    for seg in segments:
+        fi, ti = seg["from_index"], seg["to_index"]
+        f_in = fi in cluster
+        t_in = ti in cluster
+        if f_in and t_in:
+            ls = dict(seg)
+            ls["from_index"] = idx_map[fi]
+            ls["to_index"] = idx_map[ti]
+            local_segs.append(ls)
+        elif f_in and not t_in:
+            external_segs.append((fi, ti, seg))
+        elif t_in and not f_in:
+            external_segs.append((ti, fi, seg))
+
+    # 局部天次颜色
+    local_day_colors = {}
+    for seg in local_segs + [s for _, _, s in external_segs]:
+        d = str(seg["day"])
+        if d not in local_day_colors:
+            local_day_colors[d] = day_colors.get(d, "#888888")
+
+    # 纬度补偿
+    avg_lat = sum(c["lat"] for c in local_cities) / len(local_cities)
+    crs_cos = math.cos(math.radians(avg_lat))
+
+    from config import ZOOM_FACTOR
+    zoom_city_radius = CITY_RADIUS / ZOOM_FACTOR
+
+    # LayoutEngine
+    extent_w = extent_zoom[1] - extent_zoom[0]
+    px_per_deg = (output.get("width_inch", 5.0) * 0.98 * output["dpi"]) / extent_w if extent_w > 0 else 200
+    layout = LayoutEngine(px_per_deg, output["dpi"])
+
+    # ── 先画外部连线（只画线，不参与布局） ──
+    from renderer import render_route_segment as _draw_route
+    for fi, ti, seg in external_segs:
+        color = day_colors.get(str(seg["day"]), "#888888")
+        _draw_route(ax,
+                    cities[fi]["lon"], cities[fi]["lat"],
+                    cities[ti]["lon"], cities[ti]["lat"],
+                    color)
+
+    # L2: 簇内路线 + 注册
+    from renderer import render_all_routes as _render_routes
+    route_pairs = _render_routes(ax, local_segs, local_cities, local_day_colors)
+    for fi, ti in route_pairs:
+        x1, y1 = local_cities[fi]["lon"], local_cities[fi]["lat"]
+        x2, y2 = local_cities[ti]["lon"], local_cities[ti]["lat"]
+        layout.register_route(x1, y1, x2, y2, LayoutEngine.ROUTE_HW)
+
+    # L3: 城市节点
+    from renderer import render_city_node as _render_node
+    for c in local_cities:
+        _render_node(ax, c["name"], c["lon"], c["lat"],
+                     c.get("color", "#888888"), crs_cos,
+                     radius=zoom_city_radius)
+        layout.place(c["lon"], c["lat"],
+                     zoom_city_radius + 0.02,
+                     zoom_city_radius * crs_cos + 0.02,
+                     f"city_{c['name']}")
+
+    # 临时 cfg
+    local_cfg = {
+        "cities": local_cities,
+        "segments": local_segs,
+        "day_colors": local_day_colors,
+        "rest_days": {},
+        "day_attractions": {},
+        "output": output,
+    }
+
+    # 预计算天数
+    day_to_segs = {}
+    for si, seg in enumerate(local_segs):
+        d = seg["day"]
+        day_to_segs.setdefault(d, []).append(si)
+    all_days = sorted(day_to_segs.keys())
+
+    if not all_days:
+        return  # 无簇内段
+
+    # L5: 天次
+    day_recipes = _place_day_labels(
+        layout, local_cfg, all_days, day_to_segs, local_cities, crs_cos)
+    # L6: 距离/时间
+    dt_recipes = _place_dist_time_labels(layout, local_segs, local_cities)
+    # L4: 景点
+    attr_recipes = _place_attractions(layout, local_cities)
+
+    # 全局松弛
+    layout.relax_overlaps()
+
+    # 渲染
+    _render_day_items(ax, layout, day_recipes)
+    _render_attr_items(ax, layout, attr_recipes)
+    _render_dt_items(ax, layout, dt_recipes)
+
+
+# ═══════════════════════════════════════════════════════════════════
 # 核心生成函数
 # ═══════════════════════════════════════════════════════════════════
 
@@ -803,7 +915,7 @@ def generate(cfg: dict) -> str:
     # L7: 行程表 + 标题（最后，不影响其他元素布局）
     _render_itinerary_and_title(ax, layout, cfg, all_days, day_to_segs, extent)
 
-    # L8: 局部放大图
+    # L8: 局部放大图（独立 figure 渲染 + 截图嵌入）
     try:
         close_pairs = _detect_close_pairs(cities, segments, INSET_THRESHOLD)
         if close_pairs:
@@ -816,46 +928,83 @@ def generate(cfg: dict) -> str:
                 if extent_zoom is None:
                     continue
 
+                # ── 创建独立 figure 渲染放大图 ──
+                zoom_dpi = output["dpi"]
+                zoom_w, zoom_h = 5.0, 5.0  # 正方形英寸
+                zoom_fig = plt.figure(
+                    figsize=(zoom_w, zoom_h),
+                    facecolor="#F8F4EC", dpi=zoom_dpi,
+                )
+                zoom_ax = zoom_fig.add_subplot(
+                    111, projection=ccrs.PlateCarree(),
+                )
+                # 无边框、无边距
+                zoom_ax.spines["geo"].set_visible(False)
+                zoom_fig.subplots_adjust(
+                    left=0.0, right=1.0, top=1.0, bottom=0.0,
+                )
+                local_lat = (extent_zoom[2] + extent_zoom[3]) / 2
+                local_cos = math.cos(math.radians(local_lat))
+                zoom_ax.set_aspect(1.0 / local_cos, adjustable="box")
+                zoom_ax.set_extent(extent_zoom, crs=ccrs.PlateCarree())
+
+                # 底图 + 省界
+                render_zoom_inset_content(
+                    zoom_ax, extent_zoom, cluster,
+                    cities, segments, cfg["day_colors"],
+                )
+                # 完整布局管道（LayoutEngine + 放置 + 松弛 + 渲染）
+                _render_zoom_pipeline(
+                    zoom_ax, extent_zoom, cluster,
+                    cities, segments, cfg["day_colors"], output,
+                )
+
+                # 截图 → RGBA → 圆形裁剪
+                zoom_fig.canvas.draw()
+                import numpy as np
+                buf = np.array(zoom_fig.canvas.renderer.buffer_rgba())
+                plt.close(zoom_fig)
+
+                # 圆形 mask（外圈透明，红色边框）
+                h, w = buf.shape[:2]
+                y, x_arr = np.ogrid[:h, :w]
+                cx_px, cy_px = w / 2, h / 2
+                out_r = min(w, h) / 2           # 外半径
+                in_r = out_r - 3                 # 内半径（3px 红色环）
+                dist = np.sqrt((x_arr - cx_px)**2 + (y - cy_px)**2)
+                # 圈外透明
+                buf[dist >= out_r] = [0, 0, 0, 0]
+                # 红色环
+                ring = (dist >= in_r) & (dist < out_r)
+                buf[ring] = [228, 60, 60, 255]  # #E74C3C
+
+                # ── 螺旋搜索放置位置（地图坐标） → figure 像素坐标 ──
                 cx, cy, hw, hh = _place_zoom_inset(
                     layout, extent_zoom, extent, crs_cos)
 
-                # 地图坐标 → 图形坐标
+                # 地图坐标 → figure 坐标 → 像素
                 disp_xy = ax.transData.transform((cx, cy))
                 fig_xy = fig.transFigure.inverted().transform(disp_xy)
+                fig_w_px = int(fig.get_figwidth() * fig.get_dpi())
+                fig_h_px = int(fig.get_figheight() * fig.get_dpi())
+                px_cx = int(fig_xy[0] * fig_w_px)
+                px_cy = int(fig_xy[1] * fig_h_px)
 
-                inset_fig_w = (2 * hw) / (extent[1] - extent[0]) * 0.98
-                inset_fig_h = (2 * hh) / (extent[3] - extent[2]) * 0.98
-
-                left = fig_xy[0] - inset_fig_w / 2
-                bottom = fig_xy[1] - inset_fig_h / 2
-
-                # 创建放大图 axes
-                inset_ax = fig.add_axes(
-                    [left, bottom, inset_fig_w, inset_fig_h],
-                    projection=ccrs.PlateCarree(),
-                )
-                inset_ax.set_extent(extent_zoom)
-
-                # 渲染放大图内容
-                render_zoom_inset_content(
-                    inset_ax, extent_zoom, cluster,
-                    cities, segments, cfg["day_colors"],
+                # 直接在 figure 画布上放置圆形 RGBA 图片（无 axes、无白边）
+                fig.figimage(
+                    buf,
+                    xo=px_cx - buf.shape[1] // 2,
+                    yo=px_cy - buf.shape[0] // 2,
+                    origin="upper",
+                    zorder=99,
                 )
 
-                # 边框
-                import matplotlib.patches as mpatches
-                inset_ax.add_patch(mpatches.Rectangle(
-                    (0, 0), 1, 1, transform=inset_ax.transAxes,
-                    facecolor="none", edgecolor="#E74C3C",
-                    linewidth=2, zorder=100,
-                ))
-
-                # 主图标记
-                render_zoom_indicator(ax, extent_zoom, inset_ax)
+                # ── 主图标记：虚线圆 + 连接线 ──
+                render_zoom_indicator(ax, extent_zoom, cx, cy, hw, hh, crs_cos)
 
                 city_names = [cities[i]["name"] for i in sorted(cluster)]
                 print(f"  放大图{ci+1}: {'+'.join(city_names)} -> "
-                      f"extent=({extent_zoom[0]:.2f},{extent_zoom[1]:.2f},"
+                      f"({extent_zoom[0]:.2f},{extent_zoom[1]:.2f},"
                       f"{extent_zoom[2]:.2f},{extent_zoom[3]:.2f})")
     except Exception as e:
         print(f"  局部放大图失败(跳过): {e}")

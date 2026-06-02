@@ -198,9 +198,10 @@ def render_all_routes(ax: Any, segments: List[dict], cities: List[dict],
 # ── 城市节点 ──
 
 def render_city_node(ax: Any, name: str, lon: float, lat: float,
-                     color: str, crs_cos: float) -> None:
+                     color: str, crs_cos: float,
+                     radius: float = None) -> None:
     """渲染城市节点：椭圆圈 + 圈内文字。"""
-    r = CITY_RADIUS
+    r = radius if radius is not None else CITY_RADIUS
     # 椭圆补偿纬度拉伸
     ax.add_patch(Ellipse(
         (lon, lat), width=2 * r, height=2 * r * crs_cos,
@@ -359,146 +360,76 @@ def render_itinerary(ax: Any, lines: List[str], cx: float, cy: float,
 
 def render_zoom_inset_content(ax: Any, extent_zoom: list,
                                cluster_indices: set,
-                               cities: list, segments: list,
+                               cities_full: list, segments_full: list,
                                day_colors: dict) -> None:
-    """在给定的 axes 上渲染放大图内容。
+    """渲染放大图底图（后续布局由 generate 的管道完成）。
 
-    包含：底图 + 省界 + 簇内城市节点 + 簇内路线段 + 景点。
-    字体比主图小一号（×0.75）。
+    只负责底图 + 省界。城市/路线/标注由调用方通过完整管道渲染。
 
     Args:
-        ax: 已创建并设好 extent 的 inset axes（PlateCarree 投影）
+        ax: 已设置好 extent 和 aspect 的 GeoAxes
         extent_zoom: 放大区域范围
         cluster_indices: 簇内城市索引集合
-        cities: 全部城市列表
-        segments: 全部路线段列表
+        cities_full: 全部城市列表
+        segments_full: 全部路线段列表
         day_colors: 天次颜色映射
     """
     from config import PROVINCE_COLORS, EN_PROV_MAP, PROV_CN_NAMES
 
     # 底图
     render_base_map(ax, extent_zoom)
-    # 省界（在放大范围内）
+    # 省界
     render_provinces(ax, extent_zoom, PROVINCE_COLORS,
                      EN_PROV_MAP, PROV_CN_NAMES)
 
-    # 字体缩放
-    font_city = 12   # 16 × 0.75
-    font_prim = 10   # 14 × 0.75
-    font_sec = 9     # 12 × 0.75
-
-    # 簇内城市节点
-    cluster_cities = {idx: cities[idx] for idx in cluster_indices}
-    avg_lat = (sum(c["lat"] for c in cluster_cities.values()) /
-               len(cluster_cities)) if cluster_cities else 45
-    crs_cos_local = math.cos(math.radians(avg_lat))
-
-    for idx, c in cluster_cities.items():
-        # 城市椭圆
-        r = CITY_RADIUS
-        ax.add_patch(Ellipse(
-            (c["lon"], c["lat"]), width=2 * r, height=2 * r * crs_cos_local,
-            facecolor="white", edgecolor=c.get("color", "#888888"),
-            linewidth=3, transform=ccrs.PlateCarree(), zorder=20,
-        ))
-        ax.text(c["lon"], c["lat"], c["name"],
-                fontproperties=F(font_city), color=c.get("color", "#888888"),
-                ha="center", va="center", zorder=21, path_effects=ST(3))
-
-        # 景点直接绘制在真实坐标附近（简化布局，不做碰撞检测）
-        for is_prim, attr_key in [(True, "attractions_primary"),
-                                   (False, "attractions_secondary")]:
-            color = ATTR_PRIM_COLOR if is_prim else ATTR_SEC_COLOR
-            sz = font_prim if is_prim else font_sec
-            for a in c.get(attr_key, []):
-                try:
-                    alon, alat = float(a["lon"]), float(a["lat"])
-                except (ValueError, TypeError):
-                    continue
-                # 打点
-                ax.plot(alon, alat, "o", color=color, markersize=4,
-                        markerfacecolor=color if is_prim else "none",
-                        markeredgewidth=1.5,
-                        transform=ccrs.PlateCarree(), zorder=16)
-                # 标签：直接放在坐标旁
-                ax.text(alon + 0.03, alat + 0.02, a["name"],
-                        fontproperties=F(sz), color=color,
-                        ha="left", va="bottom", zorder=17,
-                        path_effects=ST(2))
-
-    # 簇内路线段
-    for seg in segments:
-        fi, ti = seg["from_index"], seg["to_index"]
-        if fi in cluster_indices and ti in cluster_indices:
-            day = seg["day"]
-            color = day_colors.get(str(day), "#888888")
-            render_route_segment(
-                ax,
-                cities[fi]["lon"], cities[fi]["lat"],
-                cities[ti]["lon"], cities[ti]["lat"],
-                color,
-            )
-
 
 def render_zoom_indicator(ax_main: Any, extent_zoom: list,
-                          inset_ax: Any, color: str = "#E74C3C") -> None:
-    """在主图上绘制放大区域标记和连接线。
+                          inset_cx: float, inset_cy: float,
+                          inset_hw: float, inset_hh: float,
+                          crs_cos: float,
+                          color: str = "#E74C3C") -> None:
+    """在主图上绘制圆形放大区域标记和连接线。
 
-    虚线矩形标记放大范围 + 从矩形角到放大图边框角的连接线。
+    虚线圆标记放大范围 + 连接线从放大区域圆边到放大镜圆边。
+    用纬度补偿 crs_cos 确保显示为正圆。
 
     Args:
         ax_main: 主图 axes
         extent_zoom: 放大区域 [lon_min, lon_max, lat_min, lat_max]
-        inset_ax: 放大图 axes（用于获取其位置）
+        inset_cx, inset_cy: 放大镜中心（地图坐标）
+        inset_hw, inset_hh: 放大镜半宽半高（地图坐标）
+        crs_cos: 纬度余弦补偿
         color: 标记颜色
     """
-    lon_min, lon_max, lat_min, lat_max = extent_zoom
+    # 虚线圆标记放大范围（在 lat 方向拉伸以补偿 crs_cos，显示为正圆）
+    zoom_cx = (extent_zoom[0] + extent_zoom[1]) / 2
+    zoom_cy = (extent_zoom[2] + extent_zoom[3]) / 2
+    zoom_rx = (extent_zoom[1] - extent_zoom[0]) / 2
+    zoom_ry = zoom_rx / crs_cos  # 拉伸纬度
 
-    # 虚线矩形标记放大范围
-    rect_lons = [lon_min, lon_max, lon_max, lon_min, lon_min]
-    rect_lats = [lat_min, lat_min, lat_max, lat_max, lat_min]
-    ax_main.plot(rect_lons, rect_lats, color=color, linewidth=1.5,
+    n_pts = 64
+    angles = [2 * math.pi * i / n_pts for i in range(n_pts + 1)]
+    circle_lons = [zoom_cx + zoom_rx * math.cos(a) for a in angles]
+    circle_lats = [zoom_cy + zoom_ry * math.sin(a) for a in angles]
+    ax_main.plot(circle_lons, circle_lats, color=color, linewidth=1.5,
                  linestyle="--", transform=ccrs.PlateCarree(),
                  zorder=98, alpha=0.7)
 
-    # 获取 inset axes 在图形坐标中的边框四角
-    inset_bbox = inset_ax.get_position()
-
-    # 虚线框四角（地图坐标）
-    corners_map = [(lon_min, lat_min), (lon_max, lat_min),
-                   (lon_max, lat_max), (lon_min, lat_max)]
-
-    # inset 在图形坐标中的四角
-    inset_corners_fig = [
-        (inset_bbox.x0, inset_bbox.y0),
-        (inset_bbox.x1, inset_bbox.y0),
-        (inset_bbox.x1, inset_bbox.y1),
-        (inset_bbox.x0, inset_bbox.y1),
-    ]
-
-    # 找最近的角对 → 画两条连接线
-    fig = ax_main.figure
-    pairs = []
-    for ci, (mlon, mlat) in enumerate(corners_map):
-        mx, my = ax_main.transData.transform((mlon, mlat))
-        mxf, myf = fig.transFigure.inverted().transform((mx, my))
-        for ii, (ixf, iyf) in enumerate(inset_corners_fig):
-            dist = math.hypot(mxf - ixf, myf - iyf)
-            pairs.append((dist, ci, ii, mlon, mlat, ixf, iyf))
-
-    pairs.sort()
-    used_map = set()
-    used_inset = set()
-    for _, ci, ii, mlon, mlat, ixf, iyf in pairs:
-        if ci not in used_map and ii not in used_inset:
-            used_map.add(ci)
-            used_inset.add(ii)
-            ax_main.annotate(
-                "", xy=(ixf, iyf), xycoords="figure fraction",
-                xytext=(mlon, mlat), textcoords=ccrs.PlateCarree(),
-                arrowprops=dict(arrowstyle="-", color=color,
-                               linewidth=1, alpha=0.5, ls="--"),
-                zorder=97,
-            )
-        if len(used_map) >= 2:
-            break
+    # 连接线：放大区域圆边 → 放大镜圆边
+    inset_r = min(inset_hw, inset_hh)
+    dx = inset_cx - zoom_cx
+    dy = inset_cy - zoom_cy
+    # 调整方向向量也做纬度补偿
+    dy_adj = dy * crs_cos
+    dist = math.hypot(dx, dy_adj)
+    if dist > 0:
+        ux, uy_adj = dx / dist, dy_adj / dist
+        uy = uy_adj / crs_cos
+        # 起点：放大区域圆边
+        sx, sy = zoom_cx + ux * zoom_rx, zoom_cy + uy * zoom_ry
+        # 终点：放大镜圆边
+        ex, ey = inset_cx - ux * inset_r, inset_cy - uy * inset_r
+        ax_main.plot([sx, ex], [sy, ey],
+                     color=color, linewidth=1, alpha=0.4,
+                     linestyle="--",
+                     transform=ccrs.PlateCarree(), zorder=97)

@@ -201,4 +201,5 @@ def get_city_index(cfg: dict, name: str) -> Optional[int]:
 
 # ── 局部放大图 ──
 INSET_THRESHOLD = 0.02       # 触发阈值：地图对角线的比例
-INSET_PADDING = 1.5          # 放大区域外扩倍率
+INSET_PADDING = 1.8          # 放大区域外扩倍率
+ZOOM_FACTOR = 5               # 放大倍数（相对于主图）
