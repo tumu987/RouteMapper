@@ -798,149 +798,93 @@ def _place_zoom_attractions(ax, layout: LayoutEngine,
 def _render_zoom_pipeline(ax, extent_zoom: list,
                           cluster: set, cities: list, segments: list,
                           day_colors: dict, output: dict) -> None:
-    """在给定 axes 上运行完整生成管道。
+    """放大镜简化管道：偏移量基于 zoom_city_radius 统一缩放，不走 LayoutEngine。
 
-    只处理簇内城市（景点、标注），外部连线只画路线不标注。
+    天次/距离放路线中点上下，景点引线偏移按缩放城圈计算。
     """
-    # 只取簇内城市
-    cluster_list = sorted(cluster)
+    from config import ZOOM_FACTOR
+    zoom_cr = CITY_RADIUS / ZOOM_FACTOR
 
-    # 局部城市列表 + index 映射
+    cluster_list = sorted(cluster)
     local_cities = [cities[i] for i in cluster_list]
     idx_map = {old: new for new, old in enumerate(cluster_list)}
 
-    # 段：两端都在簇内 → 完整标注；一端在簇内 → 只画线
-    local_segs = []     # 完整标注
-    external_segs = []  # 只画线
+    local_segs, external_segs = [], []
     for seg in segments:
         fi, ti = seg["from_index"], seg["to_index"]
-        f_in = fi in cluster
-        t_in = ti in cluster
+        f_in, t_in = fi in cluster, ti in cluster
         if f_in and t_in:
-            ls = dict(seg)
-            ls["from_index"] = idx_map[fi]
-            ls["to_index"] = idx_map[ti]
+            ls = dict(seg); ls["from_index"] = idx_map[fi]; ls["to_index"] = idx_map[ti]
             local_segs.append(ls)
         elif f_in and not t_in:
             external_segs.append((fi, ti, seg))
         elif t_in and not f_in:
             external_segs.append((ti, fi, seg))
 
-    # 局部天次颜色
     local_day_colors = {}
     for seg in local_segs + [s for _, _, s in external_segs]:
         d = str(seg["day"])
         if d not in local_day_colors:
             local_day_colors[d] = day_colors.get(d, "#888888")
 
-    # 纬度补偿
     avg_lat = sum(c["lat"] for c in local_cities) / len(local_cities)
     crs_cos = math.cos(math.radians(avg_lat))
 
-    from config import ZOOM_FACTOR
-    zoom_city_radius = CITY_RADIUS / ZOOM_FACTOR
+    from renderer import (render_route_segment, render_all_routes,
+                          render_city_node, render_day_label,
+                          render_dist_time, render_attraction_outside,
+                          ATTR_PRIM_COLOR, ATTR_SEC_COLOR)
 
-    # LayoutEngine
-    extent_w = extent_zoom[1] - extent_zoom[0]
-    px_per_deg = (output.get("width_inch", 5.0) * 0.98 * output["dpi"]) / extent_w if extent_w > 0 else 200
-    layout = LayoutEngine(px_per_deg, output["dpi"])
-    # 缩小碰撞距离常量适配放大镜比例
-    scale = zoom_city_radius / CITY_RADIUS  # = 1/ZOOM_FACTOR
-    layout.ROUTE_HW *= scale
-    layout.MARGIN_PLACED *= scale
-    layout.MARGIN_ROUTE *= scale
-    layout.MARGIN_LABEL *= scale
-    layout.MIN_DIST_EXTRA *= scale
-    layout.LINE_GAP *= scale
-    layout.MAX_SLIDE_FRAC *= scale
-    layout.MAX_SLIDE_ABS *= scale
-    # 搜索距离缩放要温和，确保能走出城圈边界
-    attr_scale = max(scale, 0.4)
-    layout.ATTR_SEARCH_DISTS = tuple(d * attr_scale for d in LayoutEngine.ATTR_SEARCH_DISTS)
-    layout.ATTR_FALLBACK_DISTS = tuple(d * attr_scale for d in LayoutEngine.ATTR_FALLBACK_DISTS)
-    layout.GROUPED_GAP_DISTS = tuple(d * attr_scale for d in LayoutEngine.GROUPED_GAP_DISTS)
-
-    # ── 先画外部连线（只画线，不参与布局） ──
-    from renderer import render_route_segment as _draw_route
+    # 外部连线
     for fi, ti, seg in external_segs:
-        color = day_colors.get(str(seg["day"]), "#888888")
-        _draw_route(ax,
-                    cities[fi]["lon"], cities[fi]["lat"],
-                    cities[ti]["lon"], cities[ti]["lat"],
-                    color)
+        render_route_segment(ax, cities[fi]["lon"], cities[fi]["lat"],
+                             cities[ti]["lon"], cities[ti]["lat"],
+                             day_colors.get(str(seg["day"]), "#888888"))
 
-    # L2: 簇内路线 + 注册
-    from renderer import render_all_routes as _render_routes
-    route_pairs = _render_routes(ax, local_segs, local_cities, local_day_colors)
-    for fi, ti in route_pairs:
-        x1, y1 = local_cities[fi]["lon"], local_cities[fi]["lat"]
-        x2, y2 = local_cities[ti]["lon"], local_cities[ti]["lat"]
-        layout.register_route(x1, y1, x2, y2, LayoutEngine.ROUTE_HW)
+    # 簇内路线
+    render_all_routes(ax, local_segs, local_cities, local_day_colors)
 
-    # L3: 城市节点
-    from renderer import render_city_node as _render_node
+    # 城市节点
     for c in local_cities:
-        _render_node(ax, c["name"], c["lon"], c["lat"],
-                     c.get("color", "#888888"), crs_cos,
-                     radius=zoom_city_radius)
-        layout.place(c["lon"], c["lat"],
-                     zoom_city_radius + 0.02,
-                     zoom_city_radius * crs_cos + 0.02,
-                     f"city_{c['name']}")
+        render_city_node(ax, c["name"], c["lon"], c["lat"],
+                         c.get("color", "#888888"), crs_cos, radius=zoom_cr)
 
-    # 临时 cfg
-    local_cfg = {
-        "cities": local_cities,
-        "segments": local_segs,
-        "day_colors": local_day_colors,
-        "rest_days": {},
-        "day_attractions": {},
-        "output": output,
-    }
+    # 天次 + 距离/时间
+    offset = zoom_cr * 1.5
+    for seg in local_segs:
+        fi, ti = seg["from_index"], seg["to_index"]
+        mx = (local_cities[fi]["lon"] + local_cities[ti]["lon"]) / 2
+        my = (local_cities[fi]["lat"] + local_cities[ti]["lat"]) / 2
+        color = local_day_colors.get(str(seg["day"]), "#888888")
+        render_day_label(ax, f"D{seg['day']}", mx, my + offset, "center",
+                         color=color, size=14)
+        dist = seg.get("distance", ""); time = seg.get("time", "")
+        if dist:
+            render_dist_time(ax, dist, time, mx, my - offset,
+                             mx, my - offset * 1.8)
 
-    # 预计算天数
-    day_to_segs = {}
-    for si, seg in enumerate(local_segs):
-        d = seg["day"]
-        day_to_segs.setdefault(d, []).append(si)
-    all_days = sorted(day_to_segs.keys())
-
-    if not all_days:
-        return  # 无簇内段
-
-    # L5: 天次
-    day_recipes = _place_day_labels(
-        layout, local_cfg, all_days, day_to_segs, local_cities, crs_cos)
-    # L6: 距离/时间
-    dt_recipes = _place_dist_time_labels(layout, local_segs, local_cities)
-    # L4: 景点（CITY_RADIUS→极小值强制所有景点走独立放置 + layout 内部距离已缩放）
-    import config as _cfg
-    _orig_cr = _cfg.CITY_RADIUS
-    _cfg.CITY_RADIUS = -0.1  # 负值：place_attraction 判定所有景点为圈外，走独立引线放置
-    try:
-        attr_recipes = _place_attractions(layout, local_cities,
-                                          city_radius=-0.1)
-    finally:
-        _cfg.CITY_RADIUS = _orig_cr
-
-    # 不松弛：方图比圆大一倍，标注天然分散
-    print(f"  [zoom] placed: {sorted([p[4] for p in layout.placed if 'attr' in p[4]])}")
-    print(f"  [zoom] recipes: {[r.get('name', r.get('kind','?')) for r in attr_recipes]}")
-    for r in attr_recipes:
-        if r.get("kind") == "outside":
-            k = r["label_key"]
-            x, y = _lookup_placed(layout, k)
-            print(f"  [zoom]   {r['name']} ({k}): ({x:.3f},{y:.3f})" if x else f"  [zoom]   {r['name']} ({k}): NOT FOUND")
-        else:
-            for im in r.get("items_meta", []):
-                k = im["label_key"]
-                x, y = _lookup_placed(layout, k)
-                print(f"  [zoom]   {im['name']} ({k}): ({x:.3f},{y:.3f})" if x else f"  [zoom]   {im['name']} ({k}): NOT FOUND")
-
-    # 渲染
-    _render_day_items(ax, layout, day_recipes)
-    _render_attr_items(ax, layout, attr_recipes)
-    _render_dt_items(ax, layout, dt_recipes)
+    # 景点（引线偏移随 zoom_cr 缩放）
+    leader_dist = zoom_cr * 3.0
+    for idx, c in enumerate(local_cities):
+        for is_prim, attr_key in [(True, "attractions_primary"),
+                                   (False, "attractions_secondary")]:
+            color = ATTR_PRIM_COLOR if is_prim else ATTR_SEC_COLOR
+            for a in c.get(attr_key, []):
+                try:
+                    alon, alat = float(a["lon"]), float(a["lat"])
+                except (ValueError, TypeError):
+                    continue
+                dx, dy = alon - c["lon"], alat - c["lat"]
+                d = math.hypot(dx, dy)
+                ux = dx / d if d > 0.001 else 1.0
+                uy = dy / d if d > 0.001 else 0.0
+                lx, ly = alon + ux * leader_dist, alat + uy * leader_dist
+                ha = "left" if ux >= 0 else "right"
+                render_attraction_outside(
+                    ax, a["name"], alat, alon, is_prim,
+                    lx, ly, ha,
+                    {"need_leader": True, "lx": lx, "ly": ly},
+                )
 
 
 # ═══════════════════════════════════════════════════════════════════
