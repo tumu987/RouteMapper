@@ -113,6 +113,35 @@ def _build_itinerary_lines(cfg: dict, all_days: list,
     return lines
 
 
+def _detect_close_pairs(cities: list, segments: list,
+                        threshold: float) -> list:
+    """检测 segments 中距离过近的相邻城市对。
+
+    Args:
+        cities: 城市列表
+        segments: 路线段列表
+        threshold: 距离阈值（地图坐标）
+
+    Returns:
+        [(from_index, to_index), ...] 过近的相邻城市对
+    """
+    lons = [c["lon"] for c in cities]
+    lats = [c["lat"] for c in cities]
+    diagonal = math.hypot(max(lons) - min(lons), max(lats) - min(lats))
+    threshold_dist = diagonal * threshold
+
+    close = []
+    for seg in segments:
+        fi, ti = seg["from_index"], seg["to_index"]
+        dist = math.hypot(
+            cities[fi]["lon"] - cities[ti]["lon"],
+            cities[fi]["lat"] - cities[ti]["lat"],
+        )
+        if dist < threshold_dist:
+            close.append((fi, ti))
+    return close
+
+
 def _detect_city_provinces(cities: list) -> dict:
     """根据城市坐标自动判断所属省份。返回 {城市名: 省份简称}。"""
     from cartopy.io import shapereader
