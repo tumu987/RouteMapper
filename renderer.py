@@ -378,74 +378,33 @@ def render_zoom_inset_content(ax: Any, extent_zoom: list,
 
     # 底图
     render_base_map(ax, extent_zoom)
+
     # 省界
     render_provinces(ax, extent_zoom, PROVINCE_COLORS,
                      EN_PROV_MAP, PROV_CN_NAMES)
 
 
 def render_zoom_indicator(ax_main: Any, extent_zoom: list,
-                          inset_cx: float, inset_cy: float,
-                          inset_hw: float, inset_hh: float,
-                          crs_cos: float,
+                          zoom_radius: float, crs_cos: float,
                           color: str = "#E74C3C") -> None:
-    """在主图上绘制圆形放大区域标记和折线引线。
-
-    虚线圆 + 折线引线（风格与景点引线一致）：
-    选取框圆边 → 斜线 → 拐点 → 水平线 → 放大镜圆边。
+    """在主图上绘制虚线圆选取框（与放大镜展示范围一致，无连接线）。
 
     Args:
         ax_main: 主图 axes
-        extent_zoom: 放大区域 [lon_min, lon_max, lat_min, lat_max]
-        inset_cx, inset_cy: 放大镜中心（地图坐标）
-        inset_hw, inset_hh: 放大镜半宽半高（地图坐标）
-        crs_cos: 纬度余弦补偿
-        color: 标记颜色
+        extent_zoom: 渲染范围（取中心坐标用）
+        zoom_radius: 选取框地理半径
+        crs_cos: 纬度补偿
+        color: 颜色
     """
-    # 虚线圆标记放大范围
-    zoom_cx = (extent_zoom[0] + extent_zoom[1]) / 2
-    zoom_cy = (extent_zoom[2] + extent_zoom[3]) / 2
-    zoom_rx = (extent_zoom[1] - extent_zoom[0]) / 2
-    zoom_ry = zoom_rx * crs_cos  # 纬度补偿：显示为正圆
+    center_lon = (extent_zoom[0] + extent_zoom[1]) / 2
+    center_lat = (extent_zoom[2] + extent_zoom[3]) / 2
+    rx = zoom_radius
+    ry = zoom_radius * crs_cos
 
     n_pts = 64
     angles = [2 * math.pi * i / n_pts for i in range(n_pts + 1)]
-    circle_lons = [zoom_cx + zoom_rx * math.cos(a) for a in angles]
-    circle_lats = [zoom_cy + zoom_ry * math.sin(a) for a in angles]
-    ax_main.plot(circle_lons, circle_lats, color=color, linewidth=1.5,
+    lons = [center_lon + rx * math.cos(a) for a in angles]
+    lats = [center_lat + ry * math.sin(a) for a in angles]
+    ax_main.plot(lons, lats, color=color, linewidth=1.5,
                  linestyle="--", transform=ccrs.PlateCarree(),
                  zorder=98, alpha=0.7)
-
-    # 折线引线：选取框圆边 → 拐点 → 放大镜圆边
-    # 拐点：选取框和放大镜之间的中点（60% 处），水平线对齐放大镜中心
-    inset_r = min(inset_hw, inset_hh)
-
-    # 选取框上最接近放大镜的点
-    dx = inset_cx - zoom_cx
-    dy = (inset_cy - zoom_cy) * crs_cos
-    dist = math.hypot(dx, dy)
-    if dist < 1e-6:
-        return
-    ux = dx / dist
-    uy = dy / dist
-
-    # 起点：选取框圆边
-    start_lon = zoom_cx + ux * zoom_rx
-    start_lat = zoom_cy + uy * zoom_ry
-
-    # 终点：放大镜圆边（远侧）
-    end_lon = inset_cx - ux * inset_r
-    end_lat = inset_cy - uy * inset_r * crs_cos
-
-    # 拐点：斜线 60% 处，水平线终点对齐
-    knee_lon = start_lon + (end_lon - start_lon) * 0.6
-    # 拐点 y 对齐终点 y（水平线）
-    knee_lat = end_lat
-
-    # 斜线段：起点 → 拐点
-    ax_main.plot([start_lon, knee_lon], [start_lat, knee_lat],
-                 color=color, linewidth=1.2, alpha=0.6, linestyle="-",
-                 transform=ccrs.PlateCarree(), zorder=97)
-    # 水平段：拐点 → 终点
-    ax_main.plot([knee_lon, end_lon], [knee_lat, end_lat],
-                 color=color, linewidth=1.2, alpha=0.6, linestyle="-",
-                 transform=ccrs.PlateCarree(), zorder=97)
