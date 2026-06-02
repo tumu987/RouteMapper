@@ -191,12 +191,6 @@ def _validate(cfg: dict) -> None:
             raise ValueError(f"rest_days day {day}: 城市 '{name}' 不在 cities 列表中")
 
 
-def get_city_index(cfg: dict, name: str) -> Optional[int]:
-    """根据城市名查找索引。"""
-    for c in cfg["cities"]:
-        if c["name"] == name:
-            return c["index"]
-    return None
 
 
 # ── 局部放大图 ──

@@ -7,6 +7,7 @@ matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 import matplotlib.patheffects as pe
 from matplotlib.font_manager import FontProperties
+from matplotlib.colors import to_rgba
 from matplotlib.patches import Ellipse
 import cartopy.crs as ccrs
 import cartopy.feature as cfeature
@@ -163,7 +164,6 @@ def render_route_segment(ax: Any, x1: float, y1: float, x2: float, y2: float,
 
     宽22×a0.06 → 宽16×a0.12 → 宽10×a0.25 → 核心线宽6
     """
-    from matplotlib.colors import to_rgba
     for gw, ga in [(12, 0.08), (6, 0.20)]:
         ax.plot([x1, x2], [y1, y2], color=to_rgba(color, ga),
                 linewidth=gw, solid_capstyle="round",
@@ -358,21 +358,12 @@ def render_itinerary(ax: Any, lines: List[str], cx: float, cy: float,
 
 # ── 局部放大图 ──
 
-def render_zoom_inset_content(ax: Any, extent_zoom: list,
-                               cluster_indices: set,
-                               cities_full: list, segments_full: list,
-                               day_colors: dict) -> None:
-    """渲染放大图底图（后续布局由 generate 的管道完成）。
-
-    只负责底图 + 省界。城市/路线/标注由调用方通过完整管道渲染。
+def render_zoom_inset_content(ax: Any, extent_zoom: list) -> None:
+    """渲染放大图底图（底图 + 省界）。
 
     Args:
         ax: 已设置好 extent 和 aspect 的 GeoAxes
         extent_zoom: 放大区域范围
-        cluster_indices: 簇内城市索引集合
-        cities_full: 全部城市列表
-        segments_full: 全部路线段列表
-        day_colors: 天次颜色映射
     """
     from config import PROVINCE_COLORS, EN_PROV_MAP, PROV_CN_NAMES
 

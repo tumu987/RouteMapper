@@ -101,6 +101,8 @@ def _build_itinerary_lines(cfg: dict, all_days: list,
                     city = cities[segments[day_to_segs[pd][-1]]["to_index"]]["name"]
                 elif str(pd) in rest_days:
                     city = rest_days[str(pd)]
+            if not city:
+                continue  # 驻留日城市为空则跳过
             if str(day) in day_attractions:
                 da = day_attractions[str(day)]
                 aa = da.get("primary", []) + da.get("secondary", [])
@@ -235,43 +237,6 @@ def _compute_zoom_extent(cluster_indices: set, cities: list,
     ]
 
 
-def _place_zoom_inset(layout: LayoutEngine,
-                      extent_zoom: list,
-                      main_extent: list,
-                      crs_cos: float,
-                      inset_fig_w: float = 0.30) -> tuple:
-    """螺旋搜索空白区域放置放大镜。避开行程表。
-
-    Returns:
-        (center_lon, center_lat, half_w, half_h)
-    回退: 缩小 20% 重搜一轮；仍失败返回 (None,None,0,0)。
-    """
-    for attempt, scale in enumerate([1.0, 0.8]):
-        inset_hw = (inset_fig_w * scale) * (main_extent[1] - main_extent[0]) / (2 * 0.98)
-        inset_hh = (inset_fig_w * scale) * (main_extent[3] - main_extent[2]) / (2 * 0.98)
-
-        center_lon = (extent_zoom[0] + extent_zoom[1]) / 2
-        center_lat = (extent_zoom[2] + extent_zoom[3]) / 2
-
-        for step in range(1, 20):
-            radius = 1.5 + step * 0.3
-            for ang_idx in range(8):
-                angle = math.radians(ang_idx * 45 + step * 15)
-                cx = center_lon + radius * math.cos(angle)
-                cy = center_lat + radius * math.sin(angle)
-
-                if not (main_extent[0] + inset_hw < cx < main_extent[1] - inset_hw):
-                    continue
-                if not (main_extent[2] + inset_hh < cy < main_extent[3] - inset_hh):
-                    continue
-
-                if layout.is_position_clear(cx, cy, inset_hw, inset_hh,
-                                            margin=0.05, my_kind="inset"):
-                    layout.place(cx, cy, inset_hw, inset_hh,
-                                f"inset_{center_lon:.2f}")
-                    return cx, cy, inset_hw, inset_hh
-
-    return None, None, 0, 0
 
 
 def _detect_city_provinces(cities: list) -> dict:
@@ -431,11 +396,8 @@ def _render_cities(ax, layout: LayoutEngine, cities: list,
 
 
 def _place_attractions(layout: LayoutEngine, cities: list,
-                       city_radius: float = None,
                        skip_city_indices: set = None) -> list:
     """L4: 景点放置——仅放置，不渲染。返回 render recipes 列表。"""
-    if city_radius is None:
-        city_radius = CITY_RADIUS
     if skip_city_indices is None:
         skip_city_indices = set()
     print("景点(放置)...")
@@ -453,10 +415,10 @@ def _place_attractions(layout: LayoutEngine, cities: list,
         # 城圈内景点：合并引线
         in_prim = [a for a in prim_list
                    if math.hypot(a["lon"] - c["lon"], a["lat"] - c["lat"])
-                   < city_radius + 0.02]
+                   < CITY_RADIUS + 0.02]
         in_sec = [a for a in sec_list
                   if math.hypot(a["lon"] - c["lon"], a["lat"] - c["lat"])
-                  < city_radius + 0.02]
+                  < CITY_RADIUS + 0.02]
         out_prim = [a for a in prim_list if a not in in_prim]
         out_sec = [a for a in sec_list if a not in in_sec]
 
@@ -747,51 +709,6 @@ def _render_dt_items(ax, layout, recipes: list) -> None:
 # 放大图子管道：在独立 figure 上运行完整布局引擎
 # ═══════════════════════════════════════════════════════════════════
 
-def _place_zoom_attractions(ax, layout: LayoutEngine,
-                             cities: list, city_radius: float,
-                             crs_cos: float) -> list:
-    """放大镜专用景点放置——简化偏移，不依赖主图距离常量。
-
-    返回 recipes 列表，与 _render_attr_items 兼容。
-    """
-    from renderer import render_attraction_outside
-    recipes = []
-    gap = city_radius + 0.01  # 景点紧贴城圈
-
-    for idx, c in enumerate(cities):
-        prim_list = c.get("attractions_primary", [])
-        sec_list = c.get("attractions_secondary", [])
-        prim_list = _safe_attr(prim_list, c["name"], "主要")
-        sec_list = _safe_attr(sec_list, c["name"], "次要")
-
-        all_attrs = []
-        for is_prim, alist in [(True, prim_list), (False, sec_list)]:
-            for a in alist:
-                all_attrs.append((is_prim, a))
-
-        # 景点围绕城市排布（上下交替）
-        for ai, (is_prim, a) in enumerate(all_attrs):
-            color_tag = "prim" if is_prim else "sec"
-            label_key = f"attr_{idx}_{ai}_{color_tag}"
-            sz = 14 if is_prim else 12
-
-            side = 1 if ai % 2 == 0 else -1
-            tx = c["lon"] + side * gap
-            ty = c["lat"] + (ai // 2) * gap * 0.5 * (1 if ai % 4 < 2 else -1)
-
-            ha = "left" if side > 0 else "right"
-            layout.place(tx, ty, 0.05, 0.03, label_key)
-            recipes.append({
-                "kind": "outside",
-                "label_key": label_key,
-                "name": a["name"],
-                "alat": float(a["lat"]),
-                "alon": float(a["lon"]),
-                "is_primary": is_prim,
-                "ha": ha,
-                "need_leader": True,
-            })
-
     return recipes
 
 
@@ -1024,10 +941,7 @@ def generate(cfg: dict) -> str:
                 zoom_ax.set_extent(extent_zoom, crs=ccrs.PlateCarree())
 
                 # 底图 + 省界
-                render_zoom_inset_content(
-                    zoom_ax, extent_zoom, cluster,
-                    cities, segments, cfg["day_colors"],
-                )
+                render_zoom_inset_content(zoom_ax, extent_zoom)
                 # 完整布局管道（LayoutEngine + 放置 + 松弛 + 渲染）
                 _render_zoom_pipeline(
                     zoom_ax, extent_zoom, cluster,
@@ -1126,7 +1040,7 @@ def generate(cfg: dict) -> str:
                 print(f"  放大图{ci+1}: {'+'.join(city_names)} -> "
                       f"({extent_zoom[0]:.2f},{extent_zoom[1]:.2f},"
                       f"{extent_zoom[2]:.2f},{extent_zoom[3]:.2f})")
-    except Exception as e:
+    except (ValueError, TypeError, OSError, RuntimeError) as e:
         print(f"  局部放大图失败(跳过): {e}")
         import traceback
         traceback.print_exc()

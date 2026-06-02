@@ -36,7 +36,7 @@ class LayoutEngine:
     ATTR_SEARCH_DISTS = (0.06, 0.10, 0.16, 0.24)
     ATTR_FALLBACK_DISTS = (0.20, 0.30, 0.45, 0.65)
     GROUPED_GAP_DISTS = (0.05, 0.12, 0.22, 0.35)
-
+    # 松弛搜索环
     def __init__(self, px_per_deg: float = 200.0, output_dpi: float = 100.0):
         self.placed: List[Tuple[float, float, float, float, str]] = []
         self.route_segs: List[Tuple[float, float, float, float, float]] = []
@@ -162,7 +162,7 @@ class LayoutEngine:
         优化：预计算标签类别、跳过同类型对（同优先级无法互移）。
         """
         PRIORITY = {"day": 0, "dist": 1, "time": 1, "attr": 2}
-        OVERLAP_MARGIN = self.LINE_GAP  # 0.10
+        OVERLAP_MARGIN = self.LINE_GAP
         SEARCH_RING = [(d * math.cos(a), d * math.sin(a))
                        for d in (0.08, 0.16, 0.28, 0.45, 0.70, 1.0, 1.5)
                        for a in (0, math.pi/4, math.pi/2, 3*math.pi/4, math.pi,
@@ -313,23 +313,6 @@ class LayoutEngine:
         self.route_midpoints.append(((x1+x2)/2, (y1+y2)/2))
 
     # ── 辅助几何 ──
-
-    def density_side(self, mx: float, my: float,
-                     nx: float, ny: float,
-                     radius: float = 0.5) -> int:
-        """密度感知选侧：统计两侧已放元素数量，返回稀疏侧（1 或 -1）。单次遍历。"""
-        best_side, best_count = 1, float("inf")
-        for side in (1, -1):
-            sx = mx + nx * 0.3 * side
-            sy = my + ny * 0.3 * side
-            count = sum(
-                1 for px, py, _, _, _ in self.placed
-                if math.hypot(sx - px, sy - py) < radius
-            )
-            if count < best_count:
-                best_count = count
-                best_side = side
-        return best_side
 
     def place_perpendicular(self, mx: float, my: float,
                             x1: float, y1: float, x2: float, y2: float,
