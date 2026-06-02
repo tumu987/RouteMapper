@@ -52,6 +52,14 @@ for _fp in _FONT_CANDIDATES:
         break
 
 if _FONT_PATH is None:
+    print("=" * 60)
+    print("  警告: 未找到中文字体!")
+    print("  Helvetica 无法渲染中文，图上中文将显示为方块(tofu)。")
+    print("  请安装中文字体，例如:")
+    print("    macOS:  STHeiti 或 PingFang (通常已内置)")
+    print("    Linux:  sudo apt install fonts-wqy-zenhei")
+    print("    Windows: 微软雅黑 或 SimHei (通常已内置)")
+    print("=" * 60)
     _FONT_PATH = "/System/Library/Fonts/Helvetica.ttc"
 
 
@@ -105,7 +113,7 @@ def render_provinces(ax: Any, extent: List[float],
                 name="admin_1_states_provinces"
             )
         )
-    except Exception as e:
+    except (OSError, ValueError, ImportError) as e:
         print(f"  [省界] Natural Earth 数据加载失败: {e}")
         print(f"  [省界] 请检查网络连接或 cartopy 数据文件")
         return seen_provinces
@@ -139,7 +147,7 @@ def render_provinces(ax: Any, extent: List[float],
             cn_name = prov_cn_names.get(short, short)
             ax.text(cx, cy, cn_name, fontproperties=F(20),
                     color=color, alpha=0.35, ha="center", va="center", zorder=4)
-    except Exception as e:
+    except (OSError, ValueError) as e:
         print(f"  [省界] 渲染失败: {e}")
 
     return seen_provinces
@@ -304,8 +312,11 @@ def render_title(ax: Any, cfg: Dict[str, Any]) -> None:
     title = cfg["title"]
     subtitle = cfg.get("subtitle", "")
     days = _count_total_days(cfg)
-    total_km = sum(int(s.get("distance", "0km").replace("km", ""))
-                   for s in cfg["segments"])
+    try:
+        total_km = sum(float(s.get("distance", "0km").replace("km", ""))
+                       for s in cfg["segments"])
+    except (ValueError, TypeError):
+        total_km = 0
 
     # 使用 axes 相对坐标，始终固定在画布顶部
     ax.text(0.5, 0.985,
@@ -318,7 +329,7 @@ def render_title(ax: Any, cfg: Dict[str, Any]) -> None:
     if days:
         sub_text += f"  .  {days}天"
     if total_km:
-        sub_text += f" . 约{total_km}km"
+        sub_text += f" . 约{total_km:.0f}km"
 
     ax.text(0.5, 0.955, sub_text,
             fontproperties=F(16), color=SUBTITLE_COLOR,

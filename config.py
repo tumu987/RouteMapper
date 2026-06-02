@@ -109,12 +109,12 @@ def _ensure_color_contrast(day_colors: dict) -> dict:
         c2 = result[d2].lstrip('#')
         r1, g1, b1 = int(c1[0:2],16), int(c1[2:4],16), int(c1[4:6],16)
         r2, g2, b2 = int(c2[0:2],16), int(c2[2:4],16), int(c2[4:6],16)
-        dist = math.sqrt((r1-r2)**2 + (g1-g2)**2 + (b1-b2)**2)
+        dist = math.hypot(r1-r2, g1-g2, b1-b2)
         if dist < 100:
             for alt_color in AUTO_DAY_COLORS:
                 ac = alt_color.lstrip('#')
                 ar, ag, ab = int(ac[0:2],16), int(ac[2:4],16), int(ac[4:6],16)
-                adist = math.sqrt((r1-ar)**2 + (g1-ag)**2 + (b1-ab)**2)
+                adist = math.hypot(r1-ar, g1-ag, b1-ab)
                 if adist > 150:
                     result[d2] = alt_color
                     break
@@ -139,15 +139,15 @@ def load_config(path: str) -> Dict[str, Any]:
     for k, v in DEFAULT_OUTPUT.items():
         cfg["output"].setdefault(k, v)
 
-    # 自动生成 day_colors（如果未提供）
+    # 自动补全缺失的天次颜色（若无配置则全部生成）
+    max_day = _max_day(cfg)
     if "day_colors" not in cfg:
-        max_day = _max_day(cfg)
-        cfg["day_colors"] = {
-            str(d): AUTO_DAY_COLORS[(d - 1) % len(AUTO_DAY_COLORS)]
-            for d in range(1, max_day + 1)
-        }
-        # 确保相邻天颜色有足够的区分度
-        cfg["day_colors"] = _ensure_color_contrast(cfg["day_colors"])
+        cfg["day_colors"] = {}
+    for d in range(1, max_day + 1):
+        if str(d) not in cfg["day_colors"]:
+            cfg["day_colors"][str(d)] = AUTO_DAY_COLORS[(d - 1) % len(AUTO_DAY_COLORS)]
+    # 确保相邻天颜色有足够的区分度
+    cfg["day_colors"] = _ensure_color_contrast(cfg["day_colors"])
 
     return cfg
 
@@ -167,8 +167,8 @@ def _validate(cfg: dict) -> None:
         if "lon" not in c or "lat" not in c:
             raise ValueError(f"城市 '{name}' 缺少 lon/lat 坐标")
         try:
-            float(c["lon"])
-            float(c["lat"])
+            c["lon"] = float(c["lon"])
+            c["lat"] = float(c["lat"])
         except (ValueError, TypeError):
             raise ValueError(f"城市 '{name}' 坐标无效: lon={c.get('lon')}, lat={c.get('lat')}")
 

@@ -270,9 +270,8 @@ class LayoutEngine:
                             ok = False
                             break
                     if ok and not self.route_collision(nx, ny, hw, hh, 0.06):
-                        # 更新位置：删旧插新
-                        self.placed.pop(idx)
-                        self.placed.insert(idx, (nx, ny, hw, hh, label))
+                        # 更新位置：直接赋值替换
+                        self.placed[idx] = (nx, ny, hw, hh, label)
                         budged += 1
                         break
                 if budged:
@@ -457,7 +456,7 @@ class LayoutEngine:
         # Fallback: 远距离
         r_eff = abs(nx) * hw + abs(ny) * hh
         min_dist = self.ROUTE_HW + r_eff + self.MIN_DIST_EXTRA
-        for side in (-preferred, preferred):
+        for side in (-1, 1):
             for dist_mult in (2.5, 3.5):
                 tx = mx + nx * min_dist * dist_mult * side
                 ty = my + ny * min_dist * dist_mult * side
@@ -466,7 +465,22 @@ class LayoutEngine:
                     ha = "left" if side > 0 else "right"
                     self.place(tx, ty, hw, hh, f"day_{text}")
                     return tx, ty, ha
+        # 扩大搜索再试
+        for side in (-1, 1):
+            for dist_mult in (4.5, 6.0, 8.0):
+                tx = mx + nx * min_dist * dist_mult * side
+                ty = my + ny * min_dist * dist_mult * side
+                if self.is_position_clear(tx, ty, hw, hh, 0.03, self.MARGIN_ROUTE,
+                                         my_kind="day"):
+                    ha = "left" if side > 0 else "right"
+                    self.place(tx, ty, hw, hh, f"day_{text}")
+                    return tx, ty, ha
         tx, ty = mx + nx * self.ROUTE_HW * 3 + 0.1, my + ny * self.ROUTE_HW * 3 + 0.1
+        if self.is_position_clear(tx, ty, hw, hh, 0.03, self.MARGIN_ROUTE,
+                                  my_kind="day"):
+            self.place(tx, ty, hw, hh, f"day_{text}")
+            return tx, ty, "left"
+        # 彻底放弃碰撞检测
         self.place(tx, ty, hw, hh, f"day_{text}")
         return tx, ty, "left"
 
@@ -861,7 +875,7 @@ class LayoutEngine:
                         ty = start_y if i == 0 else (start_y - cum_y2)
                         if i > 0: cum_y2 += prev_hh2 + hh_a + LINE; prev_hh2 = hh_a; ty = start_y - cum_y2
                         self.place(bx, ty, hw_a, hh_a, f"attr_{idx}_{kind_a}_{i}")
-                        result.append((bx, ty, name, color_a, sz_a, ha, city_lon+cr*math.cos(0), city_lat+cr*math.sin(0)))
+                        result.append((bx, ty, name, color_a, sz_a, ha, 0, 0))  # 渲染器会重新计算 edge_x/edge_y
                     return result
 
         return None

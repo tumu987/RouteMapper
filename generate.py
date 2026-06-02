@@ -133,7 +133,7 @@ def _detect_city_provinces(cities: list) -> dict:
                 if geom.contains(pt):
                     result[c["name"]] = short
                     break
-    except Exception as e:
+    except (OSError, ValueError, ImportError) as e:
         print(f"  [省份检测] 失败: {e}")
     return result
 
@@ -241,7 +241,7 @@ def _render_base_layers(ax, extent: list, cfg: dict):
 
     # 布局引擎初始化
     extent_w = extent[1] - extent[0]
-    px_per_deg = (output["width_inch"] * output["dpi"]) / extent_w if extent_w > 0 else 200
+    px_per_deg = (output["width_inch"] * 0.98 * output["dpi"]) / extent_w if extent_w > 0 else 200
     layout = LayoutEngine(px_per_deg, output["dpi"])
 
     # 注册路线到碰撞系统
@@ -422,13 +422,13 @@ def _place_dist_time_labels(layout: LayoutEngine,
     print("距离/时间(放置)...")
     # 去重往返段（只标一个方向的 dist/time）
     round_trip_skip = set()
+    seen_pairs = set()
     for i, s1 in enumerate(segments):
-        for j, s2 in enumerate(segments):
-            if i != j and s1["from_index"] == s2["to_index"] and \
-               s1["to_index"] == s2["from_index"]:
-                if s1["from_index"] > s1["to_index"]:
-                    round_trip_skip.add(i)
-                break
+        pair = frozenset([s1["from_index"], s1["to_index"]])
+        if pair in seen_pairs:
+            round_trip_skip.add(i)
+        else:
+            seen_pairs.add(pair)
 
     recipes = []
     for si, seg in enumerate(segments):
@@ -463,13 +463,14 @@ def _render_itinerary_and_title(ax, layout: LayoutEngine, cfg: dict,
     if not result:
         result = layout.place_itinerary_two_col(table_lines, extent, cities)
         if not result:
-            # 回退：拓宽东边界 2° 重试
-            extent[1] += 2.0
-            print(f"  拓宽东边界 -> {extent[1]:.1f}")
-            ax.set_extent(extent)
-            result = layout.place_itinerary(table_lines, extent, cities)
+            # 回退：拓宽东边界 2° 重试（使用本地副本，不污染原始 extent）
+            wider_extent = list(extent)
+            wider_extent[1] += 2.0
+            print(f"  拓宽东边界 -> {wider_extent[1]:.1f}")
+            ax.set_extent(wider_extent)
+            result = layout.place_itinerary(table_lines, wider_extent, cities)
             if not result:
-                result = layout.place_itinerary_two_col(table_lines, extent, cities)
+                result = layout.place_itinerary_two_col(table_lines, wider_extent, cities)
 
     if isinstance(result, tuple) and len(result) == 4:
         cx, cy, tw, th = result
@@ -618,8 +619,9 @@ def generate(cfg: dict) -> str:
         route_name = output["output_filename"]
     else:
         route_name = f"{cities[0]['name']}-{cities[-1]['name']}-{cfg['title']}"
-    # 跨平台兼容：替换箭头符号
+    # 跨平台兼容：替换非法文件名字符
     route_name = route_name.replace("→", "-").replace("->", "-")
+    route_name = route_name.replace("/", "-").replace(":", "-").replace("\\", "-")
     cache_dir = os.path.expanduser(output["cache_dir"])
     os.makedirs(cache_dir, exist_ok=True)
     out_path = os.path.join(cache_dir, f"{route_name}.png")
