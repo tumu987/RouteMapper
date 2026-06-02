@@ -218,16 +218,20 @@ def _compute_zoom_extent(cluster_indices: set, cities: list,
         max_dist = max(max_dist, d)
 
     base_radius = max(max_dist * padding, 0.15)
-    zoom_radius = base_radius * 5 / ZOOM_FACTOR
-    zoom_radius = max(zoom_radius, max_dist * 1.3)
-    render_radius = zoom_radius * RENDER_MARGIN
+    # 选取框半径：簇范围 + 主图城圈补偿
+    select_radius = max(base_radius, max_dist * 1.3) + CITY_RADIUS
+    # 放大镜内容半径 = 选取框半径 / ZOOM_FACTOR × 5（基准 5x）
+    display_radius = select_radius * 5 / ZOOM_FACTOR
+    # 渲染半径（方图）：放大镜内容半径 × RENDER_MARGIN
+    render_radius = display_radius * RENDER_MARGIN
 
     return [
         round(center_lon - render_radius, 3),
         round(center_lon + render_radius, 3),
         round(center_lat - render_radius, 3),
         round(center_lat + render_radius, 3),
-        zoom_radius,
+        select_radius,   # 选取框半径
+        display_radius,  # 放大镜内容半径
     ]
 
 
@@ -235,7 +239,7 @@ def _place_zoom_inset(layout: LayoutEngine,
                       extent_zoom: list,
                       main_extent: list,
                       crs_cos: float,
-                      inset_fig_w: float = 0.32) -> tuple:
+                      inset_fig_w: float = 0.30) -> tuple:
     """螺旋搜索空白区域放置放大镜。避开行程表。
 
     Returns:
@@ -943,11 +947,12 @@ def generate(cfg: dict) -> str:
                 if result is None:
                     continue
                 extent_zoom = result[:4]
-                zoom_radius = result[4]  # 圆内实际展示范围的半径
+                select_radius = result[4]   # 主图选取框半径
+                display_radius = result[5]  # 放大镜内容半径
 
                 # ── 创建独立 figure 渲染放大图 ──
                 zoom_dpi = output["dpi"]
-                zoom_w, zoom_h = 5.0, 5.0  # 正方形英寸
+                zoom_w, zoom_h = 10.0, 10.0  # 圆形直径 5 英寸
                 zoom_fig = plt.figure(
                     figsize=(zoom_w, zoom_h),
                     facecolor="#F8F4EC", dpi=zoom_dpi,
@@ -988,7 +993,7 @@ def generate(cfg: dict) -> str:
                 cx_px, cy_px = w / 2, h / 2
                 render_r = (extent_zoom[1] - extent_zoom[0]) / 2  # 渲染半径(°)
                 # 圆在像素空间中的半径（方图大的范围，圆只取中心部分）
-                circle_r_px = (min(w, h) / 2) * (zoom_radius / render_r)
+                circle_r_px = (min(w, h) / 2) * (display_radius / render_r)
                 ring_w = 3  # 红色环宽度 px
                 dist = np.sqrt((x_arr - cx_px)**2 + (y - cy_px)**2)
                 # 圈外透明
@@ -997,32 +1002,48 @@ def generate(cfg: dict) -> str:
                 ring = (dist >= circle_r_px - ring_w) & (dist < circle_r_px)
                 buf[ring] = [228, 60, 60, 255]  # #E74C3C
 
-                # ── 螺旋搜索放置位置 ──
-                cx, cy, hw, hh = _place_zoom_inset(
-                    layout, extent_zoom, extent, crs_cos)
-                if cx is None:
-                    print(f"  放大镜{ci+1}: 无合适位置，跳过")
-                    continue
+                # ── 放置：选取框正上方 ──
+                center_lat = (extent_zoom[2] + extent_zoom[3]) / 2
+                cx = (extent_zoom[0] + extent_zoom[1]) / 2
 
-                # 地图坐标 → figure 像素坐标
-                disp_xy = ax.transData.transform((cx, cy))
-                fig_xy = fig.transFigure.inverted().transform(disp_xy)
-                fig_w_px = int(fig.get_figwidth() * fig.get_dpi())
-                fig_h_px = int(fig.get_figheight() * fig.get_dpi())
-                px_cx = int(fig_xy[0] * fig_w_px)
-                px_cy = int(fig_xy[1] * fig_h_px)
+                # 获取 axes 在 figure 中的实际位置
+                ax_bbox = ax.get_position()
+                xlim = ax.get_xlim()
+                ylim = ax.get_ylim()
+                ins_fig_w = zoom_w / fig.get_figwidth()
+                ins_fig_h = zoom_h / fig.get_figheight()
 
-                # 直接在 figure 画布上放置圆形 RGBA 图片（无 axes、无白边）
-                fig.figimage(
-                    buf,
-                    xo=px_cx - buf.shape[1] // 2,
-                    yo=px_cy - buf.shape[0] // 2,
-                    origin="upper",
-                    zorder=99,
-                )
+                # 选取框顶部（figure 坐标）
+                sel_top_fig = (ax_bbox.y0 + ax_bbox.height *
+                              (center_lat + select_radius - ylim[0]) / (ylim[1] - ylim[0]))
+                # 放大镜底部贴选取框顶部 + 微小间隙
+                ins_bottom_fig = sel_top_fig + 0.01
+                # 放大镜不能超出图面顶部
+                ins_bottom_fig = min(ins_bottom_fig, ax_bbox.y0 + ax_bbox.height - ins_fig_h)
+                ins_cy_fig = ins_bottom_fig + ins_fig_h / 2
+                # 放大镜水平居中于选取框
+                ins_cx_fig = ax_bbox.x0 + ax_bbox.width * (cx - xlim[0]) / (xlim[1] - xlim[0])
+
+                # 创建 Axes 放放大镜
+                ins_ax = fig.add_axes([
+                    ins_cx_fig - ins_fig_w / 2, ins_cy_fig - ins_fig_h / 2,
+                    ins_fig_w, ins_fig_h,
+                ])
+                ins_ax.imshow(buf, origin="upper")
+                ins_ax.set_xticks([])
+                ins_ax.set_yticks([])
+                for spine in ins_ax.spines.values():
+                    spine.set_visible(False)
+                ins_ax.set_facecolor("none")
+
+                # 注册到布局（用图面坐标近似）
+                cy = ylim[0] + (ins_cy_fig - ax_bbox.y0) / ax_bbox.height * (ylim[1] - ylim[0])
+                hw = ins_fig_w / ax_bbox.width * (xlim[1] - xlim[0]) / 2
+                hh = ins_fig_h / ax_bbox.height * (ylim[1] - ylim[0]) / 2
+                layout.place(cx, cy, hw, hh, f"inset_{cx:.2f}")
 
                 # ── 主图虚线圆选取框 ──
-                render_zoom_indicator(ax, extent_zoom, zoom_radius, crs_cos)
+                render_zoom_indicator(ax, extent_zoom, select_radius, crs_cos)
 
                 city_names = [cities[i]["name"] for i in sorted(cluster)]
                 print(f"  放大图{ci+1}: {'+'.join(city_names)} -> "
