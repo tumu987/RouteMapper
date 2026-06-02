@@ -388,10 +388,10 @@ def render_zoom_indicator(ax_main: Any, extent_zoom: list,
                           inset_hw: float, inset_hh: float,
                           crs_cos: float,
                           color: str = "#E74C3C") -> None:
-    """在主图上绘制圆形放大区域标记和连接线。
+    """在主图上绘制圆形放大区域标记和折线引线。
 
-    虚线圆标记放大范围 + 连接线从放大区域圆边到放大镜圆边。
-    用纬度补偿 crs_cos 确保显示为正圆。
+    虚线圆 + 折线引线（风格与景点引线一致）：
+    选取框圆边 → 斜线 → 拐点 → 水平线 → 放大镜圆边。
 
     Args:
         ax_main: 主图 axes
@@ -401,7 +401,7 @@ def render_zoom_indicator(ax_main: Any, extent_zoom: list,
         crs_cos: 纬度余弦补偿
         color: 标记颜色
     """
-    # 虚线圆标记放大范围（在 lat 方向拉伸以补偿 crs_cos，显示为正圆）
+    # 虚线圆标记放大范围
     zoom_cx = (extent_zoom[0] + extent_zoom[1]) / 2
     zoom_cy = (extent_zoom[2] + extent_zoom[3]) / 2
     zoom_rx = (extent_zoom[1] - extent_zoom[0]) / 2
@@ -415,20 +415,37 @@ def render_zoom_indicator(ax_main: Any, extent_zoom: list,
                  linestyle="--", transform=ccrs.PlateCarree(),
                  zorder=98, alpha=0.7)
 
-    # 连接线：放大区域圆边 → 放大镜圆边（显示坐标下的直线）
+    # 折线引线：选取框圆边 → 拐点 → 放大镜圆边
+    # 拐点：选取框和放大镜之间的中点（60% 处），水平线对齐放大镜中心
     inset_r = min(inset_hw, inset_hh)
+
+    # 选取框上最接近放大镜的点
     dx = inset_cx - zoom_cx
-    dy = (inset_cy - zoom_cy) * crs_cos  # 补偿纬度拉伸
+    dy = (inset_cy - zoom_cy) * crs_cos
     dist = math.hypot(dx, dy)
-    if dist > 0:
-        ux, uy = dx / dist, dy / dist
-        # 起点：放大区域圆边（geo坐标）
-        sx = zoom_cx + ux * zoom_rx
-        sy = zoom_cy + uy * zoom_ry
-        # 终点：放大镜圆边（geo坐标）
-        ex = inset_cx - ux * inset_r
-        ey = inset_cy - uy * inset_r * crs_cos
-        ax_main.plot([sx, ex], [sy, ey],
-                     color=color, linewidth=1, alpha=0.4,
-                     linestyle="--",
-                     transform=ccrs.PlateCarree(), zorder=97)
+    if dist < 1e-6:
+        return
+    ux = dx / dist
+    uy = dy / dist
+
+    # 起点：选取框圆边
+    start_lon = zoom_cx + ux * zoom_rx
+    start_lat = zoom_cy + uy * zoom_ry
+
+    # 终点：放大镜圆边（远侧）
+    end_lon = inset_cx - ux * inset_r
+    end_lat = inset_cy - uy * inset_r * crs_cos
+
+    # 拐点：斜线 60% 处，水平线终点对齐
+    knee_lon = start_lon + (end_lon - start_lon) * 0.6
+    # 拐点 y 对齐终点 y（水平线）
+    knee_lat = end_lat
+
+    # 斜线段：起点 → 拐点
+    ax_main.plot([start_lon, knee_lon], [start_lat, knee_lat],
+                 color=color, linewidth=1.2, alpha=0.6, linestyle="-",
+                 transform=ccrs.PlateCarree(), zorder=97)
+    # 水平段：拐点 → 终点
+    ax_main.plot([knee_lon, end_lon], [knee_lat, end_lat],
+                 color=color, linewidth=1.2, alpha=0.6, linestyle="-",
+                 transform=ccrs.PlateCarree(), zorder=97)
