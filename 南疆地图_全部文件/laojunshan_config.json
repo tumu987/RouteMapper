@@ -1,0 +1,246 @@
+{
+  "title": "北京→老君山→开封",
+  "subtitle": "浊漳河谷·龙门石窟·老君山·开封",
+  "cities": [
+    {
+      "index": 0,
+      "name": "北京",
+      "lat": 39.91,
+      "lon": 116.4,
+      "attractions_primary": [],
+      "attractions_secondary": [],
+      "color": "#C0392B"
+    },
+    {
+      "index": 1,
+      "name": "涞源",
+      "lat": 39.35,
+      "lon": 114.68,
+      "attractions_primary": [
+        {
+          "name": "阁院寺",
+          "lat": 39.35,
+          "lon": 114.68
+        }
+      ],
+      "attractions_secondary": [],
+      "color": "#C0392B"
+    },
+    {
+      "index": 2,
+      "name": "邢台",
+      "lat": 37.07,
+      "lon": 114.5,
+      "attractions_primary": [
+        {
+          "name": "开元寺",
+          "lat": 37.07,
+          "lon": 114.5
+        }
+      ],
+      "attractions_secondary": [],
+      "color": "#C0392B"
+    },
+    {
+      "index": 3,
+      "name": "平顺",
+      "lat": 36.2,
+      "lon": 113.43,
+      "attractions_primary": [
+        {
+          "name": "天台庵",
+          "lat": 36.2,
+          "lon": 113.43
+        },
+        {
+          "name": "大云院",
+          "lat": 36.2,
+          "lon": 113.43
+        },
+        {
+          "name": "龙门寺",
+          "lat": 36.2,
+          "lon": 113.43
+        }
+      ],
+      "attractions_secondary": [],
+      "color": "#1565C0"
+    },
+    {
+      "index": 4,
+      "name": "长治",
+      "lat": 36.2,
+      "lon": 113.12,
+      "attractions_primary": [
+        {
+          "name": "观音堂",
+          "lat": 36.2,
+          "lon": 113.12
+        },
+        {
+          "name": "法兴寺",
+          "lat": 36.2,
+          "lon": 113.12
+        }
+      ],
+      "attractions_secondary": [],
+      "color": "#1565C0"
+    },
+    {
+      "index": 5,
+      "name": "晋城",
+      "lat": 35.5,
+      "lon": 112.85,
+      "attractions_primary": [
+        {
+          "name": "玉皇庙",
+          "lat": 35.5,
+          "lon": 112.85
+        }
+      ],
+      "attractions_secondary": [],
+      "color": "#1565C0"
+    },
+    {
+      "index": 6,
+      "name": "洛阳",
+      "lat": 34.62,
+      "lon": 112.45,
+      "attractions_primary": [
+        {
+          "name": "龙门石窟",
+          "lat": 34.62,
+          "lon": 112.45
+        },
+        {
+          "name": "二里头",
+          "lat": 34.62,
+          "lon": 112.45
+        }
+      ],
+      "attractions_secondary": [],
+      "color": "#C62828"
+    },
+    {
+      "index": 7,
+      "name": "栾川",
+      "lat": 33.73,
+      "lon": 111.62,
+      "attractions_primary": [
+        {
+          "name": "老君山",
+          "lat": 33.73,
+          "lon": 111.62
+        }
+      ],
+      "attractions_secondary": [],
+      "color": "#C62828"
+    },
+    {
+      "index": 8,
+      "name": "开封",
+      "lat": 34.8,
+      "lon": 114.3,
+      "attractions_primary": [
+        {
+          "name": "山陕甘会馆",
+          "lat": 34.8,
+          "lon": 114.3
+        },
+        {
+          "name": "清明上河园",
+          "lat": 34.8,
+          "lon": 114.3
+        }
+      ],
+      "attractions_secondary": [],
+      "color": "#C62828"
+    }
+  ],
+  "segments": [
+    {
+      "from_index": 0,
+      "to_index": 1,
+      "day": 1,
+      "distance": "200km",
+      "time": "2.5小时"
+    },
+    {
+      "from_index": 1,
+      "to_index": 3,
+      "day": 1,
+      "distance": "280km",
+      "time": "3.5小时"
+    },
+    {
+      "from_index": 3,
+      "to_index": 4,
+      "day": 2,
+      "distance": "60km",
+      "time": "1小时"
+    },
+    {
+      "from_index": 4,
+      "to_index": 5,
+      "day": 3,
+      "distance": "80km",
+      "time": "1.5小时"
+    },
+    {
+      "from_index": 5,
+      "to_index": 6,
+      "day": 3,
+      "distance": "130km",
+      "time": "2小时"
+    },
+    {
+      "from_index": 6,
+      "to_index": 7,
+      "day": 5,
+      "distance": "160km",
+      "time": "2.5小时"
+    },
+    {
+      "from_index": 7,
+      "to_index": 8,
+      "day": 6,
+      "distance": "350km",
+      "time": "4.5小时"
+    },
+    {
+      "from_index": 8,
+      "to_index": 2,
+      "day": 8,
+      "distance": "350km",
+      "time": "4小时"
+    },
+    {
+      "from_index": 2,
+      "to_index": 0,
+      "day": 8,
+      "distance": "360km",
+      "time": "4小时"
+    }
+  ],
+  "rest_days": {
+    "4": "洛阳",
+    "7": "开封"
+  },
+  "map_extent": [
+    110.5,
+    117.5,
+    32.8,
+    41.0
+  ],
+  "day_colors": {
+    "1": "#D32F2F",
+    "2": "#E65100",
+    "3": "#F9A825",
+    "4": "#FDD835",
+    "5": "#7CB342",
+    "6": "#388E3C",
+    "7": "#2E7D32",
+    "8": "#1B5E20"
+  },
+  "day_attractions": {}
+}

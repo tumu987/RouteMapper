@@ -1,0 +1,24 @@
+{
+  "title": "路线标题",
+  "subtitle": "副标题/途经亮点",
+  "cities": [
+    {
+      "index": 0,
+      "name": "起点",
+      "lat": 39.9,
+      "lon": 116.4,
+      "attractions_primary": [
+        {"name": "景点名", "lat": 39.9, "lon": 116.4}
+      ],
+      "attractions_secondary": [
+        {"name": "次要景点", "lat": 39.9, "lon": 116.4}
+      ],
+      "color": "#C0392B"
+    }
+  ],
+  "segments": [
+    {"from_index": 0, "to_index": 1, "day": 1, "distance": "200km", "time": "3小时"}
+  ],
+  "rest_days": {"3": "城市名"},
+  "day_attractions": {"3": {"primary": [], "secondary": []}}
+}

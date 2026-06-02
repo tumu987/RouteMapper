@@ -1,0 +1,4 @@
+{"type":"server-started","port":56924,"host":"127.0.0.1","url_host":"localhost","url":"http://localhost:56924","screen_dir":"/Users/bubu/Claude项目/行程路线图生成/.superpowers/brainstorm/42463-1780289023/content","state_dir":"/Users/bubu/Claude项目/行程路线图生成/.superpowers/brainstorm/42463-1780289023/state"}
+{"type":"screen-added","file":"/Users/bubu/Claude项目/行程路线图生成/.superpowers/brainstorm/42463-1780289023/content/layout-engine.html"}
+{"type":"screen-added","file":"/Users/bubu/Claude项目/行程路线图生成/.superpowers/brainstorm/42463-1780289023/content/waiting.html"}
+{"type":"server-stopped","reason":"idle timeout"}

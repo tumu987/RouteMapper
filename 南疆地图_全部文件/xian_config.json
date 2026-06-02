@@ -1,0 +1,272 @@
+{
+  "title": "晋陕古建之旅",
+  "subtitle": "石窟·古塔·古城·晋商大院·周秦汉唐",
+  "cities": [
+    {
+      "index": 0,
+      "name": "北京",
+      "lat": 39.9042,
+      "lon": 116.4074,
+      "attractions_primary": [
+        {
+          "name": "故宫",
+          "lat": 39.9163,
+          "lon": 116.3972
+        },
+        {
+          "name": "天坛",
+          "lat": 39.8822,
+          "lon": 116.4066
+        }
+      ],
+      "attractions_secondary": [
+        {
+          "name": "八达岭长城",
+          "lat": 40.3541,
+          "lon": 116.0091
+        }
+      ],
+      "color": "#C0392B"
+    },
+    {
+      "index": 1,
+      "name": "大同",
+      "lat": 40.0769,
+      "lon": 113.3001,
+      "attractions_primary": [
+        {
+          "name": "云冈石窟",
+          "lat": 40.11,
+          "lon": 113.122
+        },
+        {
+          "name": "华严寺",
+          "lat": 40.09,
+          "lon": 113.294
+        }
+      ],
+      "attractions_secondary": [
+        {
+          "name": "悬空寺",
+          "lat": 39.665,
+          "lon": 113.692
+        }
+      ],
+      "color": "#E67E22"
+    },
+    {
+      "index": 2,
+      "name": "应县",
+      "lat": 39.555,
+      "lon": 113.191,
+      "attractions_primary": [
+        {
+          "name": "应县木塔",
+          "lat": 39.555,
+          "lon": 113.191
+        }
+      ],
+      "attractions_secondary": [],
+      "color": "#F39C12"
+    },
+    {
+      "index": 3,
+      "name": "太原",
+      "lat": 37.87,
+      "lon": 112.549,
+      "attractions_primary": [
+        {
+          "name": "晋祠",
+          "lat": 37.709,
+          "lon": 112.435
+        }
+      ],
+      "attractions_secondary": [
+        {
+          "name": "山西博物院",
+          "lat": 37.865,
+          "lon": 112.542
+        }
+      ],
+      "color": "#27AE60"
+    },
+    {
+      "index": 4,
+      "name": "平遥",
+      "lat": 37.189,
+      "lon": 112.176,
+      "attractions_primary": [
+        {
+          "name": "平遥古城",
+          "lat": 37.189,
+          "lon": 112.176
+        },
+        {
+          "name": "双林寺",
+          "lat": 37.058,
+          "lon": 112.127
+        }
+      ],
+      "attractions_secondary": [
+        {
+          "name": "镇国寺",
+          "lat": 37.202,
+          "lon": 112.262
+        }
+      ],
+      "color": "#1ABC9C"
+    },
+    {
+      "index": 5,
+      "name": "韩城",
+      "lat": 35.477,
+      "lon": 110.443,
+      "attractions_primary": [
+        {
+          "name": "司马迁祠",
+          "lat": 35.371,
+          "lon": 110.456
+        }
+      ],
+      "attractions_secondary": [
+        {
+          "name": "党家村",
+          "lat": 35.448,
+          "lon": 110.49
+        }
+      ],
+      "color": "#2980B9"
+    },
+    {
+      "index": 6,
+      "name": "西安",
+      "lat": 34.261,
+      "lon": 108.94,
+      "attractions_primary": [
+        {
+          "name": "兵马俑",
+          "lat": 34.386,
+          "lon": 109.273
+        },
+        {
+          "name": "陕西历史博物馆",
+          "lat": 34.217,
+          "lon": 108.946
+        },
+        {
+          "name": "大雁塔",
+          "lat": 34.218,
+          "lon": 108.959
+        },
+        {
+          "name": "西安城墙",
+          "lat": 34.259,
+          "lon": 108.942
+        }
+      ],
+      "attractions_secondary": [
+        {
+          "name": "华清宫",
+          "lat": 34.366,
+          "lon": 109.206
+        },
+        {
+          "name": "回民街",
+          "lat": 34.262,
+          "lon": 108.94
+        }
+      ],
+      "color": "#8E44AD"
+    }
+  ],
+  "segments": [
+    {
+      "from_index": 0,
+      "to_index": 1,
+      "day": 1,
+      "distance": "344km",
+      "time": "4小时"
+    },
+    {
+      "from_index": 1,
+      "to_index": 2,
+      "day": 2,
+      "distance": "141km",
+      "time": "2.5小时"
+    },
+    {
+      "from_index": 2,
+      "to_index": 3,
+      "day": 3,
+      "distance": "230km",
+      "time": "3小时"
+    },
+    {
+      "from_index": 3,
+      "to_index": 4,
+      "day": 4,
+      "distance": "104km",
+      "time": "1.5小时"
+    },
+    {
+      "from_index": 4,
+      "to_index": 5,
+      "day": 6,
+      "distance": "310km",
+      "time": "4小时"
+    },
+    {
+      "from_index": 5,
+      "to_index": 6,
+      "day": 7,
+      "distance": "229km",
+      "time": "3小时"
+    }
+  ],
+  "rest_days": {
+    "5": "平遥",
+    "8": "西安",
+    "9": "西安"
+  },
+  "map_extent": [
+    107,
+    118,
+    33,
+    42
+  ],
+  "day_colors": {
+    "1": "#E74C3C",
+    "2": "#E67E22",
+    "3": "#F1C40F",
+    "4": "#2ECC71",
+    "5": "#1ABC9C",
+    "6": "#3498DB",
+    "7": "#9B59B6",
+    "8": "#E91E63",
+    "9": "#FF9800",
+    "10": "#009688"
+  },
+  "day_attractions": {
+    "8": {
+      "primary": [
+        "兵马俑",
+        "华清宫"
+      ],
+      "secondary": []
+    },
+    "9": {
+      "primary": [
+        "陕西历史博物馆",
+        "大雁塔"
+      ],
+      "secondary": []
+    },
+    "10": {
+      "primary": [],
+      "secondary": [
+        "回民街",
+        "小雁塔"
+      ]
+    }
+  }
+}
